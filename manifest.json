@@ -1,0 +1,51 @@
+{
+  "manifest_version": 3,
+  "name": "Jev X & Weibo Reader",
+  "version": "0.2.0",
+  "description": "Use Jev to score X and Weibo posts and optionally analyze them with an LLM.",
+  "minimum_chrome_version": "102",
+  "permissions": [
+    "storage"
+  ],
+  "host_permissions": [
+    "https://api.typesafe.ai/*",
+    "https://api.tavily.com/*"
+  ],
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://*/*"
+  ],
+  "background": {
+    "service_worker": "src/background/service-worker.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://x.com/*",
+        "https://www.x.com/*",
+        "https://twitter.com/*",
+        "https://www.twitter.com/*",
+        "https://weibo.com/*",
+        "https://www.weibo.com/*"
+      ],
+      "js": [
+        "src/shared/core.js",
+        "src/content/x-dom-adapter.js",
+        "src/content/weibo-dom-adapter.js",
+        "src/content/overlay.js",
+        "src/content/auto-scroller.js",
+        "src/content/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "ISOLATED"
+    }
+  ],
+  "options_page": "options/index.html",
+  "action": {
+    "default_title": "Jev X & Weibo Reader 设置"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  }
+}

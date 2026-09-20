@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Jev X & Weibo Reader 设置</title>
+    <link rel="stylesheet" href="options.css">
+    <script defer src="../src/shared/core.js"></script>
+    <script defer src="options.js"></script>
+  </head>
+  <body>
+    <main class="page">
+      <header class="page-header">
+        <div>
+          <p class="eyebrow">CHROME EXTENSION · MVP</p>
+          <h1>Jev X & Weibo Reader 设置</h1>
+          <p class="lede">Jev 负责快速判断 X 与微博信息流；只有点击“深入解析”后，帖子内容才会发送给你配置的 LLM。</p>
+        </div>
+        <label class="switch-card"><input id="enabled" type="checkbox" checked><span>启用插件</span></label>
+      </header>
+
+      <div id="global-status" class="global-status" role="status" aria-live="polite">正在读取设置…</div>
+
+      <section class="settings-card">
+        <div class="section-heading"><div><h2>Jev 快速判断</h2><p>密钥只存放在扩展本地，不会传给 X 页面脚本。</p></div></div>
+        <div class="grid two">
+          <label class="field"><span>TypeSafe API Key</span><input id="jev-api-key" type="password" autocomplete="new-password" placeholder="留空保留已保存的 Key"><small id="jev-key-state">尚未设置</small></label>
+          <label class="field"><span>Jev model</span><input id="jev-model" type="text" value="jev-latest" autocomplete="off"></label>
+          <label class="field"><span>请求超时（毫秒）</span><input id="jev-timeout" type="number" min="1000" max="120000" step="1000"></label>
+          <label class="field"><span>并发请求数（1–4）</span><input id="jev-concurrency" type="number" min="1" max="4" step="1"></label>
+        </div>
+        <div class="actions"><button id="clear-jev-key" class="button secondary" type="button">清除 Jev Key</button><button id="test-jev" class="button secondary" type="button">保存并测试 Jev 连接</button></div>
+      </section>
+
+      <section class="settings-card">
+        <div class="section-heading"><div><h2>我的阅读偏好</h2><p>每行填写一项；这些偏好会作为 Jev 判断状态的一部分。</p></div></div>
+        <div class="grid two">
+          <label class="field"><span>我感兴趣的主题</span><textarea id="interests" rows="5" placeholder="LLM agents&#10;推理引擎&#10;开发者工具"></textarea></label>
+          <label class="field"><span>我不感兴趣的主题</span><textarea id="not-interested" rows="5" placeholder="泛泛的 AI 营销&#10;娱乐八卦"></textarea></label>
+        </div>
+        <label class="field"><span>“值得深入阅读”的定义</span><textarea id="deep-read-definition" rows="3"></textarea></label>
+      </section>
+
+      <section class="settings-card">
+        <div class="section-heading"><div><h2>Jev 判断维度</h2><p>可编辑 JSON。默认含兴趣、创新、深读、信息密度、营销噪声与一手来源，共用一次请求。</p></div></div>
+        <label class="field"><span>Questions JSON</span><textarea id="questions" class="code-field" rows="22" spellcheck="false"></textarea><small>score 支持 2–8 个 criteria；noul 表示 0–1 概率。启用的 score 维度参与加权综合分；noul penalty 按 weight 扣减。</small></label>
+      </section>
+
+      <section class="settings-card">
+        <div class="section-heading"><div><h2>评分与彩色价值层</h2><p>帖子保持清晰可读；低分红色、中分橙色、较高分蓝色、高分绿色，分数越高色层越透明。</p></div></div>
+        <div class="grid two">
+          <label class="field"><span>绿色高价值阈值（分数 ≥）</span><input id="threshold-no-mask" type="number" min="0" max="100" step="1"></label>
+          <label class="field"><span>蓝色值得关注阈值（分数 ≥）</span><input id="threshold-light" type="number" min="0" max="100" step="1"></label>
+          <label class="field"><span>橙色一般相关阈值（分数 ≥）</span><input id="threshold-medium" type="number" min="0" max="100" step="1"></label>
+          <label class="field"><span>置信度保护阈值</span><input id="confidence-floor" type="number" min="0" max="100" step="1"></label>
+        </div>
+        <div class="check-row">
+          <label><input id="mask-enabled" type="checkbox"> 启用彩色价值层</label>
+          <label><input id="show-dimensions" type="checkbox"> 显示各维度评分</label>
+          <label><input id="confidence-protection" type="checkbox"> 低置信度时降低颜色警示级别</label>
+        </div>
+      </section>
+
+      <section class="settings-card">
+        <div class="section-heading"><div><h2>自动浏览</h2><p>页面上的控件可随时开始或停止；手动操作后会暂停。</p></div></div>
+        <div class="check-row"><label><input id="auto-scroll" type="checkbox"> 页面打开后自动浏览</label></div>
+        <div class="grid two">
+          <label class="field"><span>每条帖子停留（毫秒）</span><input id="dwell-ms" type="number" min="1000" max="60000" step="500"></label>
+          <label class="field"><span>用户操作后暂停（毫秒）</span><input id="pause-ms" type="number" min="1000" max="120000" step="1000"></label>
+          <label class="field"><span>每次 Session 最多分析帖子</span><input id="max-posts" type="number" min="1" max="1000" step="1"></label>
+          <label class="field"><span>每分钟最多新分析数</span><input id="max-per-minute" type="number" min="1" max="120" step="1"></label>
+        </div>
+      </section>
+
+      <section class="settings-card">
+        <div class="section-heading"><div><h2>Tavily 联网研究</h2><p>深入解析时先检索网页证据，再交给 LLM 综合解释并标注来源；帖子文本会发送给 Tavily。</p></div></div>
+        <div class="check-row"><label><input id="tavily-enabled" type="checkbox"> 深入解析时启用 Tavily 搜索</label></div>
+        <div class="grid two">
+          <label class="field"><span>Tavily API Key</span><input id="tavily-api-key" type="password" autocomplete="new-password" placeholder="留空保留已保存的 Key"><small id="tavily-key-state">尚未设置</small></label>
+          <label class="field"><span>搜索深度</span><select id="tavily-search-depth"><option value="basic">Basic（推荐，1 credit）</option><option value="fast">Fast（1 credit）</option><option value="ultra-fast">Ultra fast（1 credit）</option><option value="advanced">Advanced（2 credits）</option></select></label>
+          <label class="field"><span>最大来源数</span><input id="tavily-max-results" type="number" min="1" max="10" step="1"></label>
+        </div>
+        <div class="actions"><button id="clear-tavily-key" class="button secondary" type="button">清除 Tavily Key</button><button id="test-tavily" class="button secondary" type="button">保存并测试 Tavily（消耗搜索额度）</button></div>
+      </section>
+
+      <section class="settings-card">
+        <div class="section-heading"><div><h2>深入解析 LLM</h2><p>请求在扩展后台发出。自定义服务只在连接测试时申请对应主机权限。</p></div></div>
+        <div class="grid two">
+          <label class="field"><span>Provider</span><select id="llm-provider"><option value="openai-compatible">OpenAI-compatible</option><option value="ollama">Ollama</option></select></label>
+          <label class="field"><span>Base URL</span><input id="llm-base-url" type="url" placeholder="https://provider.example/v1"></label>
+          <label class="field"><span>API Key（Ollama 可留空）</span><input id="llm-api-key" type="password" autocomplete="new-password" placeholder="留空保留已保存的 Key"><small id="llm-key-state">尚未设置</small></label>
+          <label class="field"><span>Model</span><input id="llm-model" type="text" autocomplete="off" placeholder="填写服务提供的模型名"></label>
+          <label class="field"><span>Temperature</span><input id="llm-temperature" type="number" min="0" max="2" step="0.1"></label>
+          <label class="field"><span>最大输出 tokens</span><input id="llm-max-tokens" type="number" min="64" max="8192" step="64"></label>
+        </div>
+        <div class="actions"><button id="ollama-preset" class="button secondary" type="button">填入本机 Ollama 地址</button><button id="clear-llm-key" class="button secondary" type="button">清除 LLM Key</button><button id="test-llm" class="button secondary" type="button">保存并测试 LLM 连接</button></div>
+      </section>
+
+      <footer class="footer-actions">
+        <span id="save-status" role="status" aria-live="polite">修改后记得保存。</span>
+        <button id="save-settings" class="button primary" type="button">保存设置</button>
+      </footer>
+      <p class="privacy-note">API Key 保存在 chrome.storage.local。浏览器扩展中的本地密钥不等同于服务器端密钥保险库。分析缓存保留最多 7 天；帖文上下文只放在当前浏览器会话存储中。</p>
+    </main>
+  </body>
+</html>
