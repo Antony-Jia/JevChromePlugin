@@ -155,3 +155,10 @@ test("daily request budget is normalized and bounded", () => {
   assert.equal(Core.createDefaultConfig().browsing.maxRequestsPerDay, 300);
   assert.throws(() => Core.normalizeConfig({ browsing: { maxRequestsPerDay: 5 } }), /Daily request limit/);
 });
+
+test("preload-ahead count defaults to 3 and is bounded", () => {
+  assert.equal(Core.createDefaultConfig().browsing.preloadAhead, 3);
+  assert.equal(Core.normalizeConfig({ browsing: { preloadAhead: 7 } }).browsing.preloadAhead, 7);
+  assert.equal(Core.normalizeConfig({ browsing: { preloadAhead: 0 } }).browsing.preloadAhead, 0);
+  assert.throws(() => Core.normalizeConfig({ browsing: { preloadAhead: 50 } }), /Preload-ahead/);
+});

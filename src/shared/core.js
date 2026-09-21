@@ -112,6 +112,7 @@
       scoring: {
         maskEnabled: true,
         showDimensionScores: true,
+        railChartStyle: "rings",
         thresholds: { noMask: 0.8, light: 0.6, medium: 0.4 },
         lowConfidenceProtection: true,
         confidenceFloor: 0.5
@@ -120,6 +121,8 @@
         autoScroll: false,
         dwellMs: 5000,
         pauseAfterInteractionMs: 15000,
+        preloadAhead: 3,
+        railWidth: 136,
         maxPostsPerSession: 100,
         maxAnalysesPerMinute: 20,
         maxRequestsPerDay: 300
@@ -262,6 +265,9 @@
     if (!["openai-compatible", "ollama"].includes(llm.provider)) {
       throw new ConfigValidationError("LLM provider must be openai-compatible or ollama.");
     }
+    if (!["rings", "bars"].includes(scoring.railChartStyle)) {
+      throw new ConfigValidationError("Rail chart style must be rings or bars.");
+    }
     if (!["basic", "advanced", "fast", "ultra-fast"].includes(tavily.searchDepth)) {
       throw new ConfigValidationError("Tavily search depth is invalid.");
     }
@@ -285,6 +291,7 @@
       scoring: {
         maskEnabled: scoring.maskEnabled !== false,
         showDimensionScores: scoring.showDimensionScores !== false,
+        railChartStyle: scoring.railChartStyle,
         thresholds: cleanThresholds,
         lowConfidenceProtection: scoring.lowConfidenceProtection !== false,
         confidenceFloor: boundedNumber(scoring.confidenceFloor, 0.5, 0, 1, "Confidence floor")
@@ -293,6 +300,8 @@
         autoScroll: browsing.autoScroll === true,
         dwellMs: Math.round(boundedNumber(browsing.dwellMs, 5000, 1000, 60000, "Dwell time")),
         pauseAfterInteractionMs: Math.round(boundedNumber(browsing.pauseAfterInteractionMs, 15000, 1000, 120000, "Interaction pause")),
+        preloadAhead: Math.round(boundedNumber(browsing.preloadAhead, 3, 0, 20, "Preload-ahead count")),
+        railWidth: Math.round(boundedNumber(browsing.railWidth, 136, 88, 220, "Rail lane width")),
         maxPostsPerSession: Math.round(boundedNumber(browsing.maxPostsPerSession, 100, 1, 1000, "Session post limit")),
         maxAnalysesPerMinute: Math.round(boundedNumber(browsing.maxAnalysesPerMinute, 20, 1, 120, "Analyses per minute limit")),
         maxRequestsPerDay: Math.round(boundedNumber(browsing.maxRequestsPerDay, 300, 10, 10000, "Daily request limit"))

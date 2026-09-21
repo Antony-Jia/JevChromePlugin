@@ -20,6 +20,9 @@
   const inFlightById = new Map();
   // postId -> contentHash of the most recent extraction
   const latestHashById = new Map();
+  // postId -> contentHash already requested, so the preload window does not
+  // re-queue posts that failed or were triggered by the auto-scroller.
+  const requestedById = new Map();
   const articleData = new WeakMap();
   const pendingArticles = new Set();
   const MAX_RESULT_ENTRIES = 300;
@@ -48,7 +51,8 @@
     onDeepAnalyze: (article, post, result, state) => deepAnalyze(article, post, result, state),
     onDeepCancel: (state) => { void sendMessage({ type: "CANCEL_DEEP", postId: state.postId }); },
     onRetry: (article, post) => requestAnalysis(article, post),
-    onSettings: () => sendMessage({ type: "OPEN_OPTIONS" })
+    onSettings: () => sendMessage({ type: "OPEN_OPTIONS" }),
+    laneContainer: (article) => adapter.laneContainer?.(article)
   });
 
   function createToolbar() {
@@ -186,6 +190,7 @@
 
   async function registerArticle(article) {
     if (article.parentElement?.closest("article")) return;
+    if (adapter.isReply?.(article)) return;   // X 评论/回复不参与评分
     const post = adapter.extract(article);
     if (!post) return;
     const contentHash = await safeContentHash(post);
@@ -230,19 +235,29 @@
     inspectScheduled = true;
     requestAnimationFrame(() => {
       inspectScheduled = false;
-      for (const article of pendingArticles) if (article.isConnected) void registerArticle(article);
+      const batch = [...pendingArticles].filter((article) => article.isConnected);
       pendingArticles.clear();
       pruneNeeded = false;
       pruneDisconnectedArticles();
+      // Registration is async (content hashing); evaluate the preload window
+      // only after this batch has been indexed.
+      void Promise.all(batch.map((article) => registerArticle(article))).then(() => ensureAhead());
     });
   }
 
   function pruneDisconnectedArticles() {
     for (const [postId, entries] of postsById) {
-      for (const entry of entries) if (!entry.article.isConnected) entries.delete(entry);
+      for (const entry of entries) {
+        if (entry.article.isConnected) continue;
+        // Articles stay observed so scroll crossings re-evaluate the preload
+        // window; release nodes once they leave the DOM.
+        intersectionObserver?.unobserve(entry.article);
+        entries.delete(entry);
+      }
       if (!entries.size) {
         postsById.delete(postId);
         latestHashById.delete(postId);
+        requestedById.delete(postId);
       }
     }
   }
@@ -301,8 +316,40 @@
   }
 
   function requestAnalysis(article, post) {
-    const latest = articleData.get(article)?.post || post;
+    const data = articleData.get(article);
+    const latest = data?.post || post;
+    if (latest?.postId && data?.contentHash) requestedById.set(latest.postId, data.contentHash);
     return analyzeForPost(latest);
+  }
+
+  function entryNeedsAnalysis(entry) {
+    const data = articleData.get(entry.article);
+    const post = data?.post || entry.post;
+    if (!post?.postId || !data?.contentHash) return false;
+    const stored = resultById.get(post.postId);
+    if (stored?.contentHash === data.contentHash && stored.result) return false;
+    if (inFlightById.get(post.postId)?.contentHash === data.contentHash) return false;
+    return requestedById.get(post.postId) !== data.contentHash;
+  }
+
+  // Posts in or above the viewport are analyzed immediately; below the fold
+  // only the first `preloadAhead` posts are requested, so scrolling moves the
+  // window instead of draining the whole feed.
+  function ensureAhead() {
+    if (!config?.enabled) return;
+    const preloadAhead = Math.max(0, Math.round(Number(config.browsing?.preloadAhead ?? 3)));
+    const viewportBottom = window.innerHeight || document.documentElement.clientHeight || 0;
+    const entries = allPostEntries()
+      .map((entry) => ({ entry, rect: entry.article.getBoundingClientRect() }))
+      .sort((a, b) => a.rect.top - b.rect.top);
+    let belowIndex = 0;
+    for (const { entry, rect } of entries) {
+      if (rect.top >= viewportBottom) {
+        belowIndex += 1;
+        if (belowIndex > preloadAhead) break;
+      }
+      if (entryNeedsAnalysis(entry)) void requestAnalysis(entry.article, entry.post);
+    }
   }
 
   async function deepAnalyze(article, post, result, state) {
@@ -338,14 +385,9 @@
   }
 
   function observeDocument() {
-    intersectionObserver = new IntersectionObserver((entries) => {
-      for (const entry of entries) {
-        if (!entry.isIntersecting) continue;
-        intersectionObserver.unobserve(entry.target);
-        const data = articleData.get(entry.target);
-        if (data && config?.enabled) void requestAnalysis(entry.target, data.post);
-      }
-    }, { rootMargin: "800px 0px 800px 0px", threshold: 0.01 });
+    // Boundary crossings are the scroll signal; ensureAhead recomputes which
+    // posts fall inside the viewport and the preload window from geometry.
+    intersectionObserver = new IntersectionObserver(() => ensureAhead(), { threshold: 0.01 });
 
     mutationObserver = new MutationObserver((records) => {
       const articles = new Set();
@@ -384,12 +426,15 @@
     toolbar.mask.textContent = maskEnabled ? "关闭色层" : "开启色层";
     renderer.setGlobalMaskEnabled(maskEnabled && config.enabled);
     renderer.setEnabled(config.enabled, currentArticles());
+    renderer.setRailWidth(config.browsing.railWidth, currentArticles());
+    renderer.setChartStyle(config.scoring.railChartStyle, currentArticles());
     if (hadConfig) {
       if (inferenceChanged) {
         // Model, preferences or question prompts changed: cached scores no
         // longer describe this inference setup, so re-analyze from scratch.
         resultById.clear();
         inFlightById.clear();
+        requestedById.clear();
         for (const entry of allPostEntries()) {
           if (config.enabled) {
             renderer.renderPending(entry.article, entry.post, "偏好或模型已更改，等待重新判断");
@@ -428,6 +473,12 @@
         renderer.renderPending(entry.article, entry.post);
         intersectionObserver?.observe(entry.article);
       }
+    }
+    if (config.enabled) {
+      // Re-observe in case posts were registered while the extension was off,
+      // then (re)evaluate the preload window for the new config.
+      for (const entry of allPostEntries()) intersectionObserver?.observe(entry.article);
+      ensureAhead();
     }
   }
 

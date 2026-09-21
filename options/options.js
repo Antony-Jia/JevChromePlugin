@@ -65,6 +65,7 @@
       scoring: {
         maskEnabled: $("mask-enabled").checked,
         showDimensionScores: $("show-dimensions").checked,
+        railChartStyle: $("rail-chart-style").value,
         thresholds,
         lowConfidenceProtection: $("confidence-protection").checked,
         confidenceFloor: Number($("confidence-floor").value) / 100
@@ -73,6 +74,8 @@
         autoScroll: $("auto-scroll").checked,
         dwellMs: Number($("dwell-ms").value),
         pauseAfterInteractionMs: Number($("pause-ms").value),
+        preloadAhead: Number($("preload-ahead").value),
+        railWidth: Number($("rail-width").value),
         maxPostsPerSession: Number($("max-posts").value),
         maxAnalysesPerMinute: Number($("max-per-minute").value),
         maxRequestsPerDay: Number($("max-requests-per-day").value)
@@ -119,10 +122,13 @@
     $("confidence-floor").value = Math.round(config.scoring.confidenceFloor * 100);
     $("mask-enabled").checked = config.scoring.maskEnabled;
     $("show-dimensions").checked = config.scoring.showDimensionScores;
+    $("rail-chart-style").value = config.scoring.railChartStyle || "rings";
     $("confidence-protection").checked = config.scoring.lowConfidenceProtection;
     $("auto-scroll").checked = config.browsing.autoScroll;
     $("dwell-ms").value = config.browsing.dwellMs;
     $("pause-ms").value = config.browsing.pauseAfterInteractionMs;
+    $("preload-ahead").value = config.browsing.preloadAhead;
+    $("rail-width").value = config.browsing.railWidth;
     $("max-posts").value = config.browsing.maxPostsPerSession;
     $("max-per-minute").value = config.browsing.maxAnalysesPerMinute;
     $("max-requests-per-day").value = config.browsing.maxRequestsPerDay;

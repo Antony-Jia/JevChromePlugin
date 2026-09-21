@@ -88,6 +88,39 @@
     return { ...(authorHandle ? { authorHandle } : {}), text: text.slice(0, QUOTE_LIMIT), truncated: text.length > QUOTE_LIMIT };
   }
 
+  // Replies in a timeline carry a "回复 @user / Replying to @user" context row
+  // above the author name; on a /status/ page, articles after the focused
+  // tweet are replies. Neither should be scored.
+  function isReplyContext(article) {
+    const userName = ownedElements(article, '[data-testid="User-Name"], [data-testid="userName"]')[0];
+    if (!userName) return false;
+    let node = userName;
+    while (node && node !== article) {
+      let sibling = node.previousElementSibling;
+      while (sibling) {
+        if (sibling.querySelector('a[href^="/"]') && /^(回复|replying to)/i.test(normalizeText(sibling.textContent))) return true;
+        sibling = sibling.previousElementSibling;
+      }
+      node = node.parentElement;
+    }
+    return false;
+  }
+
+  function focusedStatusId(document) {
+    const pathname = document?.location?.pathname || (typeof location !== "undefined" ? location.pathname : "");
+    return String(pathname).match(/^\/[^/]+\/status\/(\d+)/)?.[1] || null;
+  }
+
+  function findFocusedArticle(document, statusId) {
+    const pattern = new RegExp(`/status/${statusId}(?:[/?#]|$)`);
+    for (const candidate of document.querySelectorAll("article")) {
+      const hit = Array.from(candidate.querySelectorAll('a[href*="/status/"]'))
+        .some((link) => pattern.test(link.getAttribute("href") || ""));
+      if (hit) return candidate;
+    }
+    return null;
+  }
+
   function readMetrics(article) {
     const selectors = {
       replies: '[data-testid="reply"]',
@@ -118,6 +151,32 @@
       if (!article?.querySelectorAll) return null;
       const permalink = findPermalink(article);
       return findStatusId(permalink?.getAttribute("href"));
+    }
+
+    // Shift the full center row (feed plus secondary sidebar) so the rail gets
+    // a lane without narrowing posts or overlapping X's right sidebar.
+    laneContainer(article) {
+      const column = article?.closest?.('[data-testid="primaryColumn"]') || null;
+      if (!column) return null;
+      const row = column.parentElement;
+      const view = article.ownerDocument?.defaultView;
+      const rowStyle = row && view?.getComputedStyle(row);
+      const hasSiblingColumn = row && Array.from(row.children).some((child) => child !== column && child.getBoundingClientRect().width >= 300);
+      const element = rowStyle?.display === "flex" && rowStyle.flexDirection === "row" && hasSiblingColumn ? row : column;
+      return { element, mode: "shift" };
+    }
+
+    // Replies/comments are not scored: they carry a reply-context row in
+    // timelines, or sit below the focused tweet on /status/ pages.
+    isReply(article) {
+      if (!article?.ownerDocument) return false;
+      if (isReplyContext(article)) return true;
+      const statusId = focusedStatusId(article.ownerDocument);
+      if (!statusId) return false;
+      const focused = findFocusedArticle(article.ownerDocument, statusId);
+      if (!focused || focused === article) return false;
+      const following = article.ownerDocument.defaultView?.Node?.DOCUMENT_POSITION_FOLLOWING ?? 4;
+      return Boolean(focused.compareDocumentPosition(article) & following);
     }
 
     extract(article) {
