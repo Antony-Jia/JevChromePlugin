@@ -80,15 +80,15 @@
       };
       const { data } = await requestWithRetry(
         normalizeEndpoint(config.baseUrl),
-        { method: "POST", headers, body: JSON.stringify(payload) },
+        { method: "POST", headers, body: JSON.stringify(payload), signal: options.signal },
         this.timeoutMs,
         "LLM"
       );
       return extractContent(data);
     }
 
-    async analyze(context) {
-      return this.complete(SYSTEM_PROMPT, JSON.stringify(context, null, 2));
+    async analyze(context, options = {}) {
+      return this.complete(SYSTEM_PROMPT, JSON.stringify(context, null, 2), options);
     }
 
     async testConnection() {

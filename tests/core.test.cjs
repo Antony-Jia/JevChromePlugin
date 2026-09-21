@@ -100,3 +100,58 @@ test("cache keys are stable for object key order and change with state", async (
   assert.equal(left, reordered);
   assert.notEqual(left, changed);
 });
+
+test("content hash ignores engagement metrics but tracks text and quote changes", async () => {
+  const base = { postId: "1", text: "A new inference engine.", metrics: { likes: 1 } };
+  const moreLikes = { postId: "1", text: "A new inference engine.", metrics: { likes: 9999 } };
+  const edited = { postId: "1", text: "A new inference engine is out.", metrics: { likes: 1 } };
+  const quoted = { ...base, quotedPost: { authorHandle: "@bob", text: "details" } };
+  const baseHash = await Core.computeContentHash(base);
+  assert.equal(await Core.computeContentHash(moreLikes), baseHash);
+  assert.notEqual(await Core.computeContentHash(edited), baseHash);
+  assert.notEqual(await Core.computeContentHash(quoted), baseHash);
+});
+
+test("analysis config hash ignores weights and display settings but tracks prompts, model and interests", async () => {
+  const config = Core.createDefaultConfig();
+  const baseHash = await Core.computeAnalysisConfigHash(config);
+  const reweighted = Core.createDefaultConfig();
+  reweighted.questions[0].weight = 0.9;
+  reweighted.questions[0].includeInComposite = false;
+  reweighted.scoring.thresholds.light = 0.2;
+  assert.equal(await Core.computeAnalysisConfigHash(reweighted), baseHash);
+  const editedPrompt = Core.createDefaultConfig();
+  editedPrompt.questions[0].instructions = "Different instructions.";
+  assert.notEqual(await Core.computeAnalysisConfigHash(editedPrompt), baseHash);
+  const otherModel = Core.createDefaultConfig();
+  otherModel.jev.model = "jev-2";
+  assert.notEqual(await Core.computeAnalysisConfigHash(otherModel), baseHash);
+  const newInterest = Core.createDefaultConfig();
+  newInterest.preferences.interests = ["robotics"];
+  assert.notEqual(await Core.computeAnalysisConfigHash(newInterest), baseHash);
+});
+
+test("extraction quality metadata survives post validation with only known fields", () => {
+  const post = Core.validateExtractedPost({
+    postId: "1",
+    text: "text",
+    extractionQuality: {
+      adapterVersion: "x-dom-adapter-1.1",
+      textTruncated: true,
+      suspectedCollapsed: false,
+      unexpected: "dropped"
+    }
+  });
+  assert.equal(post.extractionQuality.textTruncated, true);
+  assert.equal(post.extractionQuality.adapterVersion, "x-dom-adapter-1.1");
+  assert.equal("unexpected" in post.extractionQuality, false);
+  const state = Core.buildJevState(post, Core.createDefaultConfig().preferences);
+  assert.equal(state.extraction_quality.textTruncated, true);
+});
+
+test("daily request budget is normalized and bounded", () => {
+  const config = Core.normalizeConfig({ browsing: { maxRequestsPerDay: 500 } });
+  assert.equal(config.browsing.maxRequestsPerDay, 500);
+  assert.equal(Core.createDefaultConfig().browsing.maxRequestsPerDay, 300);
+  assert.throws(() => Core.normalizeConfig({ browsing: { maxRequestsPerDay: 5 } }), /Daily request limit/);
+});

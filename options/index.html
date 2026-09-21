@@ -20,6 +20,7 @@
       </header>
 
       <div id="global-status" class="global-status" role="status" aria-live="polite">正在读取设置…</div>
+      <div id="usage-status" class="global-status" role="status" aria-live="polite"></div>
 
       <section class="settings-card">
         <div class="section-heading"><div><h2>Jev 快速判断</h2><p>密钥只存放在扩展本地，不会传给 X 页面脚本。</p></div></div>
@@ -62,13 +63,14 @@
       </section>
 
       <section class="settings-card">
-        <div class="section-heading"><div><h2>自动浏览</h2><p>页面上的控件可随时开始或停止；手动操作后会暂停。</p></div></div>
+        <div class="section-heading"><div><h2>自动浏览</h2><p>页面上的控件可随时开始或停止；手动操作后会暂停。Session 上限只约束自动浏览；每分钟和每日上限是全插件共享的。</p></div></div>
         <div class="check-row"><label><input id="auto-scroll" type="checkbox"> 页面打开后自动浏览</label></div>
         <div class="grid two">
           <label class="field"><span>每条帖子停留（毫秒）</span><input id="dwell-ms" type="number" min="1000" max="60000" step="500"></label>
           <label class="field"><span>用户操作后暂停（毫秒）</span><input id="pause-ms" type="number" min="1000" max="120000" step="1000"></label>
           <label class="field"><span>每次 Session 最多分析帖子</span><input id="max-posts" type="number" min="1" max="1000" step="1"></label>
-          <label class="field"><span>每分钟最多新分析数</span><input id="max-per-minute" type="number" min="1" max="120" step="1"></label>
+          <label class="field"><span>每分钟最多新分析数（所有标签页共享）</span><input id="max-per-minute" type="number" min="1" max="120" step="1"></label>
+          <label class="field"><span>每日外部请求上限（Jev/LLM/Tavily 合计）</span><input id="max-requests-per-day" type="number" min="10" max="10000" step="10"></label>
         </div>
       </section>
 

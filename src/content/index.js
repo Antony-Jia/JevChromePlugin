@@ -13,19 +13,26 @@
     ? new globalThis.JevXReaderWeiboDomAdapter.WeiboDomAdapter()
     : new globalThis.JevXReaderXDomAdapter.XDomAdapter();
   const postsById = new Map();
+  // postId -> { contentHash, result }; only rendered when the hash still matches
+  // the newest extracted content, so stale scores never attach to new text.
   const resultById = new Map();
+  // postId -> { contentHash, promise }
   const inFlightById = new Map();
+  // postId -> contentHash of the most recent extraction
+  const latestHashById = new Map();
   const articleData = new WeakMap();
   const pendingArticles = new Set();
+  const MAX_RESULT_ENTRIES = 300;
   let config;
   let renderer;
   let intersectionObserver;
   let mutationObserver;
   let configSignature = "";
-  let configVersion = 0;
+  let inferenceSignature = "";
   let maskEnabled = true;
   let discoveredCount = 0;
   let inspectScheduled = false;
+  let pruneNeeded = false;
   const toolbar = createToolbar();
 
   const scroller = new globalThis.JevXReaderAutoScroller.AutoScroller({
@@ -39,6 +46,7 @@
 
   renderer = new globalThis.JevXReaderOverlay.OverlayRenderer({
     onDeepAnalyze: (article, post, result, state) => deepAnalyze(article, post, result, state),
+    onDeepCancel: (state) => { void sendMessage({ type: "CANCEL_DEEP", postId: state.postId }); },
     onRetry: (article, post) => requestAnalysis(article, post),
     onSettings: () => sendMessage({ type: "OPEN_OPTIONS" })
   });
@@ -164,11 +172,25 @@
     return entries;
   }
 
-  function registerArticle(article) {
+  function safeContentHash(post) {
+    return Core.computeContentHash(post).catch(() => null);
+  }
+
+  function rememberResult(postId, value) {
+    if (!resultById.has(postId) && resultById.size >= MAX_RESULT_ENTRIES) {
+      const oldest = resultById.keys().next().value;
+      if (oldest !== undefined) resultById.delete(oldest);
+    }
+    resultById.set(postId, value);
+  }
+
+  async function registerArticle(article) {
     if (article.parentElement?.closest("article")) return;
     const post = adapter.extract(article);
     if (!post) return;
-    const signature = JSON.stringify(post);
+    const contentHash = await safeContentHash(post);
+    if (!contentHash) return;
+    const signature = `${post.postId}:${contentHash}`;
     const previous = articleData.get(article);
     if (previous?.signature === signature) return;
     if (previous?.post?.postId && previous.post.postId !== post.postId) {
@@ -178,7 +200,8 @@
         if (!oldEntries.size) postsById.delete(previous.post.postId);
       }
     }
-    articleData.set(article, { signature, post });
+    articleData.set(article, { signature, post, contentHash });
+    latestHashById.set(post.postId, contentHash);
     let entries = postsById.get(post.postId);
     if (!entries) {
       entries = new Set();
@@ -191,8 +214,9 @@
     } else {
       entries.add({ article, post });
     }
-    if (resultById.has(post.postId)) {
-      renderer.renderResult(article, post, resultById.get(post.postId), config);
+    const stored = resultById.get(post.postId);
+    if (stored?.contentHash === contentHash && stored.result && config) {
+      renderer.renderResult(article, post, stored.result, config);
     } else if (config?.enabled) {
       renderer.renderPending(article, post);
       if (intersectionObserver) intersectionObserver.observe(article);
@@ -202,12 +226,13 @@
 
   function scheduleArticles(articles) {
     for (const article of articles) if (article?.matches?.("article")) pendingArticles.add(article);
-    if (inspectScheduled || !pendingArticles.size) return;
+    if (inspectScheduled || (!pendingArticles.size && !pruneNeeded)) return;
     inspectScheduled = true;
     requestAnimationFrame(() => {
       inspectScheduled = false;
-      for (const article of pendingArticles) if (article.isConnected) registerArticle(article);
+      for (const article of pendingArticles) if (article.isConnected) void registerArticle(article);
       pendingArticles.clear();
+      pruneNeeded = false;
       pruneDisconnectedArticles();
     });
   }
@@ -215,43 +240,63 @@
   function pruneDisconnectedArticles() {
     for (const [postId, entries] of postsById) {
       for (const entry of entries) if (!entry.article.isConnected) entries.delete(entry);
-      if (!entries.size) postsById.delete(postId);
+      if (!entries.size) {
+        postsById.delete(postId);
+        latestHashById.delete(postId);
+      }
     }
   }
 
-  function analyzeForPost(post) {
-    if (resultById.has(post.postId)) return Promise.resolve({ ok: true, postId: post.postId, result: resultById.get(post.postId), cached: true });
-    if (inFlightById.has(post.postId)) return inFlightById.get(post.postId);
-    const requestVersion = configVersion;
+  async function analyzeForPost(post) {
+    const contentHash = await safeContentHash(post);
+    const stored = resultById.get(post.postId);
+    if (stored?.contentHash === contentHash && stored.result) {
+      return { ok: true, postId: post.postId, result: stored.result, cached: true };
+    }
+    const inFlight = inFlightById.get(post.postId);
+    if (inFlight?.contentHash === contentHash) return inFlight.promise;
+    const requestInference = inferenceSignature;
     let promise;
     promise = sendMessage({ type: "ANALYZE_POST", requestId: crypto.randomUUID(), post }).then((response) => {
-      if (requestVersion !== configVersion) return { ok: true, postId: post.postId, stale: true };
+      // Only inference-affecting changes invalidate in-flight results; display
+      // setting changes (thresholds, dwell time) must not drop them.
+      if (requestInference !== inferenceSignature) return { ok: true, postId: post.postId, stale: true };
       scroller.noteAnalysisResult(response);
+      const stillCurrent = latestHashById.get(post.postId) === contentHash;
       if (response?.ok && response.result) {
-        resultById.set(post.postId, response.result);
-        for (const entry of postsById.get(post.postId) || []) {
-          if (entry.article.isConnected) renderer.renderResult(entry.article, entry.post, response.result, config);
+        const existingResult = resultById.get(post.postId);
+        if (stillCurrent || !existingResult || existingResult.contentHash !== latestHashById.get(post.postId)) {
+          rememberResult(post.postId, { contentHash, result: response.result });
+        }
+        if (stillCurrent) {
+          for (const entry of postsById.get(post.postId) || []) {
+            if (entry.article.isConnected) renderer.renderResult(entry.article, entry.post, response.result, config);
+          }
         }
         toolbar.setStatus(`Jev 分析完成：${post.postId}`);
       } else {
-        for (const entry of postsById.get(post.postId) || []) {
-          if (entry.article.isConnected) renderer.renderError(entry.article, entry.post, response?.error, config);
+        if (stillCurrent) {
+          for (const entry of postsById.get(post.postId) || []) {
+            if (entry.article.isConnected) renderer.renderError(entry.article, entry.post, response?.error, config);
+          }
         }
         toolbar.setStatus(response?.error?.message || "Jev 分析失败");
       }
       return response;
     }).catch(() => {
-      if (requestVersion !== configVersion) return { ok: true, postId: post.postId, stale: true };
+      if (requestInference !== inferenceSignature) return { ok: true, postId: post.postId, stale: true };
       const response = { ok: false, error: { code: "UNKNOWN", message: "扩展后台暂不可用。", retryable: true } };
       scroller.noteAnalysisResult(response);
-      for (const entry of postsById.get(post.postId) || []) {
-        if (entry.article.isConnected) renderer.renderError(entry.article, entry.post, response.error, config);
+      if (latestHashById.get(post.postId) === contentHash) {
+        for (const entry of postsById.get(post.postId) || []) {
+          if (entry.article.isConnected) renderer.renderError(entry.article, entry.post, response.error, config);
+        }
       }
       return response;
     }).finally(() => {
-      if (inFlightById.get(post.postId) === promise) inFlightById.delete(post.postId);
+      if (inFlightById.get(post.postId)?.promise === promise) inFlightById.delete(post.postId);
     });
-    inFlightById.set(post.postId, promise);
+    inFlightById.set(post.postId, { contentHash, promise });
     return promise;
   }
 
@@ -263,8 +308,15 @@
   async function deepAnalyze(article, post, result, state) {
     if (state.deepButton?.disabled) return;
     scroller.pauseForInteraction();
+    state.deepCancelled = false;
     renderer.showDeepLoading(article, state);
-    const response = await sendMessage({ type: "DEEP_ANALYZE", requestId: crypto.randomUUID(), postId: post.postId });
+    const requestPostId = post.postId;
+    // Always send the freshest snapshot so the background can rebuild session
+    // context without forcing a full page reload.
+    const latest = articleData.get(article)?.post || post;
+    const response = await sendMessage({ type: "DEEP_ANALYZE", requestId: crypto.randomUUID(), postId: post.postId, post: latest });
+    if (renderer.states.get(article) !== state || state.postId !== requestPostId) return;
+    if (state.deepCancelled) return;
     if (response?.ok && typeof response.markdown === "string") {
       renderer.showDeepAnalysis(state, response.markdown, response.sources, response.research);
     } else {
@@ -298,13 +350,21 @@
     mutationObserver = new MutationObserver((records) => {
       const articles = new Set();
       for (const record of records) {
+        if (record.type === "characterData") {
+          // Text-only edits (e.g. expanded long posts) must re-run extraction.
+          if (record.target?.parentElement?.closest?.("[data-jev-overlay]")) continue;
+          const article = record.target?.parentElement?.closest?.("article");
+          if (article) articles.add(article);
+          continue;
+        }
+        if (record.removedNodes?.length) pruneNeeded = true;
         for (const node of record.addedNodes) {
           for (const article of getArticlesFromMutation(node, record.target)) articles.add(article);
         }
       }
       scheduleArticles(articles);
     });
-    mutationObserver.observe(document.documentElement, { childList: true, subtree: true });
+    mutationObserver.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
     scheduleArticles(adapter.scan(document));
   }
 
@@ -313,9 +373,11 @@
     if (nextSignature === configSignature) return;
     const hadConfig = Boolean(config);
     const previousConfig = config;
+    const nextInferenceSignature = JSON.stringify(Core.analysisConfigPayload(nextConfig));
+    const inferenceChanged = hadConfig && nextInferenceSignature !== inferenceSignature;
     config = nextConfig;
     configSignature = nextSignature;
-    configVersion += 1;
+    inferenceSignature = nextInferenceSignature;
     scroller.configure(config);
     maskEnabled = config.scoring.maskEnabled;
     toolbar.mask.setAttribute("aria-pressed", String(maskEnabled));
@@ -323,12 +385,26 @@
     renderer.setGlobalMaskEnabled(maskEnabled && config.enabled);
     renderer.setEnabled(config.enabled, currentArticles());
     if (hadConfig) {
-      resultById.clear();
-      inFlightById.clear();
-      for (const entry of allPostEntries()) {
-        if (config.enabled) {
-          renderer.renderPending(entry.article, entry.post, "设置已更改，等待重新判断");
-          intersectionObserver?.observe(entry.article);
+      if (inferenceChanged) {
+        // Model, preferences or question prompts changed: cached scores no
+        // longer describe this inference setup, so re-analyze from scratch.
+        resultById.clear();
+        inFlightById.clear();
+        for (const entry of allPostEntries()) {
+          if (config.enabled) {
+            renderer.renderPending(entry.article, entry.post, "偏好或模型已更改，等待重新判断");
+            intersectionObserver?.observe(entry.article);
+          }
+        }
+      } else {
+        // Display/scoring-only changes (weights, thresholds, dwell time):
+        // recompute composites and masks locally without new requests.
+        for (const entry of allPostEntries()) {
+          const stored = resultById.get(entry.post.postId);
+          const entryHash = articleData.get(entry.article)?.contentHash;
+          if (stored?.result && stored.contentHash === entryHash) {
+            renderer.renderResult(entry.article, entry.post, stored.result, config);
+          }
         }
       }
       renderer.updateArticleMasks(currentArticles());

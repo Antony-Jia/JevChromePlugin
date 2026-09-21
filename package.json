@@ -5,7 +5,7 @@
   "description": "Chrome MV3 extension that scores X and Weibo posts with Jev and supports click-triggered LLM analysis.",
   "scripts": {
     "build": "node scripts/build.mjs",
-    "check": "node --check src/shared/core.js && node --check src/providers/jev-client.js && node --check src/providers/jev-response-schema.mjs && node --check src/providers/llm-router.js && node --check src/providers/tavily-client.js && node --check src/background/service-worker.mjs && node --check src/content/x-dom-adapter.js && node --check src/content/weibo-dom-adapter.js && node --check src/content/overlay.js && node --check src/content/auto-scroller.js && node --check src/content/index.js && node --check options/options.js",
+    "check": "node --check src/shared/core.js && node --check src/providers/jev-client.js && node --check src/providers/jev-response-schema.mjs && node --check src/providers/llm-router.js && node --check src/providers/tavily-client.js && node --check src/background/service-worker.mjs && node --check src/background/cache-service.js && node --check src/content/x-dom-adapter.js && node --check src/content/weibo-dom-adapter.js && node --check src/content/overlay.js && node --check src/content/auto-scroller.js && node --check src/content/index.js && node --check options/options.js",
     "test": "node --test tests/core.test.cjs tests/cache-service.test.cjs tests/x-dom-adapter.test.cjs tests/weibo-dom-adapter.test.cjs tests/llm-router.test.cjs tests/providers.test.cjs tests/tavily-client.test.cjs tests/overlay.test.cjs",
     "test:integration": "node scripts/live-api-check.mjs"
   },

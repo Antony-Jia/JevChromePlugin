@@ -220,6 +220,19 @@
       state.card.replaceChildren(title, detail, buttons);
     }
 
+    // Weights, thresholds and other display settings change without new Jev
+    // requests, so the composite is always recomputed against the live config.
+    compositeFor(result, config) {
+      try {
+        if (Array.isArray(result?.dimensions) && config?.questions) {
+          return globalThis.JevXReaderCore.calculateComposite(result.dimensions, config.questions);
+        }
+      } catch {
+        // Fall through to the composite stored with the result.
+      }
+      return result?.composite || { score: 0 };
+    }
+
     renderResult(article, post, result, config) {
       const state = this.ensureState(article, post.postId);
       state.post = post;
@@ -227,7 +240,8 @@
       state.error = null;
       state.config = config;
       const document = article.ownerDocument;
-      const score = Math.round((result.composite?.score || 0) * 100);
+      const composite = this.compositeFor(result, config);
+      const score = Math.round((composite?.score || 0) * 100);
       const title = makeElement(document, "div", "heading");
       title.append(
         makeElement(document, "span", "score", `${score} 分`),
@@ -251,7 +265,7 @@
           rows.append(makeElement(document, "span", "", dimension.label), valueElement);
         }
       }
-      const confidence = result.composite?.confidence;
+      const confidence = composite?.confidence;
       const isUncertain = !Number.isFinite(confidence) || confidence < config.scoring.confidenceFloor;
       const confidenceRow = makeElement(document, "div", `caption${isUncertain ? " uncertain" : ""}`, isUncertain
         ? "判断不确定，已降低遮罩强度"
@@ -280,14 +294,21 @@
       const source = result.dimensions?.find((dimension) => dimension.id === "primary_source_signal" && dimension.noul >= 0.5);
       const sourceRow = source ? makeElement(document, "div", "source", "包含一手来源线索") : null;
       const children = [title, rows, confidenceRow];
+      const quality = post?.extractionQuality;
+      const qualityHints = [];
+      if (quality?.textTruncated || quality?.quoteTruncated || quality?.suspectedCollapsed) {
+        qualityHints.push("正文可能不完整");
+      }
+      if (quality?.mediaAltOnly) qualityHints.push("未读取图片/视频内容");
+      if (qualityHints.length) children.push(makeElement(document, "div", "caption", qualityHints.join("；")));
       if (sourceRow) children.push(sourceRow);
       children.push(buttons);
       state.card.replaceChildren(...children);
       state.deepButton = deepButton;
-      state.maskLevel = globalThis.JevXReaderCore.maskLevelForScore(result.composite?.score || 0, confidence, config.scoring);
+      state.maskLevel = globalThis.JevXReaderCore.maskLevelForScore(composite?.score || 0, confidence, config.scoring);
       const levelLabels = { none: "高价值", light: "值得关注", medium: "一般相关", strong: "低相关" };
       state.maskLabel.textContent = `${levelLabels[state.maskLevel] || "已评分"} · ${score} 分`;
-      state.mask.style.setProperty("--tint-alpha", String(Math.max(0.045, Math.min(0.32, 0.32 - (result.composite?.score || 0) * 0.275))));
+      state.mask.style.setProperty("--tint-alpha", String(Math.max(0.045, Math.min(0.32, 0.32 - (composite?.score || 0) * 0.275))));
       this.updateMask(state);
       if (state.deepMarkdown) this.showDeepAnalysis(state, state.deepMarkdown, state.deepSources, state.deepResearch);
     }
@@ -299,8 +320,17 @@
       state.deepButton && (state.deepButton.disabled = true);
       state.deepButton && (state.deepButton.textContent = "解析中…");
       const dock = this.openDock(state, "正在检索并调用 LLM");
-      dock.body.replaceChildren(makeElement(article.ownerDocument, "div", "status", "正在准备帖子上下文、检索网页证据并生成解释…"));
-      dock.footer.replaceChildren();
+      const document = article.ownerDocument;
+      dock.body.replaceChildren(makeElement(document, "div", "status", "正在准备帖子上下文、检索网页证据并生成解释…"));
+      const cancel = createButton(document, "取消解析", "", () => {
+        state.deepCancelled = true;
+        this.callbacks.onDeepCancel?.(state);
+        state.deepButton && (state.deepButton.disabled = false);
+        state.deepButton && (state.deepButton.textContent = "深入解析");
+        state.deepOpen = false;
+        this.closeDock(dock);
+      });
+      dock.footer.replaceChildren(cancel);
     }
 
     showDeepAnalysis(state, markdown, sources = [], research = {}) {

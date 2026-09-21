@@ -121,7 +121,8 @@
         dwellMs: 5000,
         pauseAfterInteractionMs: 15000,
         maxPostsPerSession: 100,
-        maxAnalysesPerMinute: 20
+        maxAnalysesPerMinute: 20,
+        maxRequestsPerDay: 300
       },
       llm: {
         provider: "openai-compatible",
@@ -293,7 +294,8 @@
         dwellMs: Math.round(boundedNumber(browsing.dwellMs, 5000, 1000, 60000, "Dwell time")),
         pauseAfterInteractionMs: Math.round(boundedNumber(browsing.pauseAfterInteractionMs, 15000, 1000, 120000, "Interaction pause")),
         maxPostsPerSession: Math.round(boundedNumber(browsing.maxPostsPerSession, 100, 1, 1000, "Session post limit")),
-        maxAnalysesPerMinute: Math.round(boundedNumber(browsing.maxAnalysesPerMinute, 20, 1, 120, "Analyses per minute limit"))
+        maxAnalysesPerMinute: Math.round(boundedNumber(browsing.maxAnalysesPerMinute, 20, 1, 120, "Analyses per minute limit")),
+        maxRequestsPerDay: Math.round(boundedNumber(browsing.maxRequestsPerDay, 300, 10, 10000, "Daily request limit"))
       },
       llm: {
         provider: llm.provider,
@@ -396,6 +398,15 @@
     if (Array.isArray(post.mediaAltTexts)) {
       result.mediaAltTexts = post.mediaAltTexts.slice(0, 20).map((item) => cleanText(item, 500)).filter(Boolean);
     }
+    if (post.extractionQuality && typeof post.extractionQuality === "object" && !Array.isArray(post.extractionQuality)) {
+      const quality = {};
+      for (const key of ["textTruncated", "quoteTruncated", "suspectedCollapsed", "hasMedia", "mediaAltOnly", "threadContextProvided"]) {
+        if (typeof post.extractionQuality[key] === "boolean") quality[key] = post.extractionQuality[key];
+      }
+      const adapterVersion = cleanText(post.extractionQuality.adapterVersion, 40);
+      if (adapterVersion) quality.adapterVersion = adapterVersion;
+      if (Object.keys(quality).length) result.extractionQuality = quality;
+    }
     const metrics = normalizeMetrics(post.metrics);
     if (metrics) result.metrics = metrics;
     return result;
@@ -419,6 +430,7 @@
       } : undefined,
       visible_context: post.visibleThreadContext?.map((item) => ({ author_handle: item.authorHandle, text: item.text })),
       media_alt_texts: post.mediaAltTexts,
+      extraction_quality: post.extractionQuality,
       engagement: post.metrics,
       user_preferences: {
         interests: preferences.interests,
@@ -566,6 +578,52 @@
     return `fallback-${(hash >>> 0).toString(16)}`;
   }
 
+  // Inference identity: only the fields that actually change what Jev is asked
+  // about. Engagement metrics, timestamps, weights and display thresholds are
+  // intentionally excluded so they never trigger a new request on their own.
+  function contentHashPayload(post) {
+    return {
+      v: 1,
+      postId: post.postId,
+      platform: post.platform,
+      text: post.text,
+      quotedPost: post.quotedPost,
+      mediaAltTexts: post.mediaAltTexts,
+      visibleThreadContext: post.visibleThreadContext
+    };
+  }
+
+  async function computeContentHash(postInput) {
+    return makeCacheKey(contentHashPayload(validateExtractedPost(postInput)));
+  }
+
+  // Inference configuration identity: model, preferences and the parts of each
+  // question that are submitted to Jev. Weights, includeInComposite and penalty
+  // only affect local scoring, so they stay out of this fingerprint.
+  function analysisConfigPayload(config) {
+    return {
+      v: 1,
+      model: config?.jev?.model,
+      preferences: {
+        interests: config?.preferences?.interests,
+        notInterested: config?.preferences?.notInterested,
+        deepReadDefinition: config?.preferences?.deepReadDefinition
+      },
+      questions: (config?.questions || [])
+        .filter((question) => question.enabled)
+        .map((question) => ({
+          id: question.id,
+          type: question.type,
+          instructions: question.instructions,
+          criteria: question.criteria
+        }))
+    };
+  }
+
+  async function computeAnalysisConfigHash(config) {
+    return makeCacheKey(analysisConfigPayload(config));
+  }
+
   return {
     DAY_MS,
     DEFAULT_QUESTIONS,
@@ -582,6 +640,10 @@
     calculateComposite,
     maskLevelForScore,
     makeCacheKey,
+    contentHashPayload,
+    computeContentHash,
+    analysisConfigPayload,
+    computeAnalysisConfigHash,
     stableValue
   };
 });

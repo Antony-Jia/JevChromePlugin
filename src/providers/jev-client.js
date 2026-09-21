@@ -17,13 +17,23 @@
 
   async function fetchJson(url, options, timeoutMs, prefix) {
     const controller = new AbortController();
+    const externalSignal = options?.signal;
+    const onExternalAbort = () => controller.abort("cancelled");
+    if (externalSignal) {
+      if (externalSignal.aborted) controller.abort("cancelled");
+      else externalSignal.addEventListener("abort", onExternalAbort, { once: true });
+    }
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       let response;
       try {
+        globalThis.__jevNetworkAttempt?.(prefix);
         response = await fetch(url, { ...options, signal: controller.signal });
       } catch (error) {
-        if (error?.name === "AbortError") throw new ProviderError(`${prefix}_TIMEOUT`, "The request timed out.", false);
+        if (error?.name === "AbortError") {
+          if (externalSignal?.aborted) throw new ProviderError("JOB_CANCELLED", "The job was cancelled.", false);
+          throw new ProviderError(`${prefix}_TIMEOUT`, "The request timed out.", false);
+        }
         throw new ProviderError(`${prefix}_NETWORK`, "The provider could not be reached.", true);
       }
       if (!response.ok) {
@@ -45,6 +55,7 @@
       }
     } finally {
       clearTimeout(timer);
+      externalSignal?.removeEventListener?.("abort", onExternalAbort);
     }
   }
 
@@ -56,6 +67,7 @@
 
   async function requestWithRetry(url, options, timeoutMs, prefix, maxAttempts = 2) {
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      if (options?.signal?.aborted) throw new ProviderError("JOB_CANCELLED", "The job was cancelled.", false);
       try {
         return await fetchJson(url, options, timeoutMs, prefix);
       } catch (error) {

@@ -74,7 +74,8 @@
         dwellMs: Number($("dwell-ms").value),
         pauseAfterInteractionMs: Number($("pause-ms").value),
         maxPostsPerSession: Number($("max-posts").value),
-        maxAnalysesPerMinute: Number($("max-per-minute").value)
+        maxAnalysesPerMinute: Number($("max-per-minute").value),
+        maxRequestsPerDay: Number($("max-requests-per-day").value)
       },
       llm: {
         provider: $("llm-provider").value,
@@ -124,6 +125,7 @@
     $("pause-ms").value = config.browsing.pauseAfterInteractionMs;
     $("max-posts").value = config.browsing.maxPostsPerSession;
     $("max-per-minute").value = config.browsing.maxAnalysesPerMinute;
+    $("max-requests-per-day").value = config.browsing.maxRequestsPerDay;
     $("llm-provider").value = config.llm.provider;
     $("llm-base-url").value = config.llm.baseUrl;
     $("llm-api-key").value = "";
@@ -279,6 +281,15 @@
     });
   }
 
+  async function refreshUsage() {
+    const response = await send({ type: "GET_USAGE" });
+    if (!response?.ok || !response.usage) return;
+    const attempts = Object.values(response.usage.attempts || {}).reduce((sum, value) => sum + value, 0);
+    const jevTasks = response.usage.tasks?.jev || 0;
+    const deepTasks = response.usage.tasks?.deep || 0;
+    $("usage-status").textContent = `今日外部请求 ${attempts} 次（Jev 任务 ${jevTasks}、深入解析 ${deepTasks}）/ 每日上限 ${savedConfig.browsing?.maxRequestsPerDay ?? "—"}`;
+  }
+
   async function init() {
     bind();
     const response = await send({ type: "GET_SETTINGS" });
@@ -289,6 +300,7 @@
     populate(response);
     setGlobalStatus("设置已读取。保存后，打开的 X 标签页会自动刷新配置。");
     setStatus("设置已加载。");
+    void refreshUsage();
   }
 
   void init();

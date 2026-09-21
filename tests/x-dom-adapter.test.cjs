@@ -35,6 +35,16 @@ test("does not include extension overlay text in extracted post text", () => {
   assert.doesNotMatch(post.text, /Injected extension text/);
 });
 
+test("reports extraction quality flags for complete and media posts", () => {
+  const { post } = parseFixture("normal-tweet.html");
+  assert.equal(post.extractionQuality.adapterVersion, "x-dom-adapter-1.1");
+  assert.equal(post.extractionQuality.textTruncated, false);
+  assert.equal(post.extractionQuality.threadContextProvided, false);
+  const image = parseFixture("tweet-with-image.html").post;
+  assert.equal(image.extractionQuality.hasMedia, true);
+  assert.equal(image.extractionQuality.mediaAltOnly, true);
+});
+
 test("extracts quote context while keeping it separate from the main post", () => {
   const { post } = parseFixture("quote-tweet.html");
   assert.equal(post.postId, "222");

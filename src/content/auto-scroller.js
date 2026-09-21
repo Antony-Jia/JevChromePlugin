@@ -51,8 +51,8 @@
       }
       const code = response?.error?.code || "UNKNOWN";
       this.consecutiveErrors += 1;
-      if (["JEV_UNAUTHORIZED", "JEV_FORBIDDEN", "JEV_RATE_LIMIT", "RATE_LIMIT"].includes(code)) {
-        this.stop("Jev 权限或限流错误，自动浏览已暂停");
+      if (["JEV_UNAUTHORIZED", "JEV_FORBIDDEN", "JEV_RATE_LIMIT", "RATE_LIMIT", "DAILY_BUDGET"].includes(code)) {
+        this.stop("Jev 权限、限流或额度已用尽，自动浏览已暂停");
       } else if (this.consecutiveErrors >= 3) {
         this.stop("连续分析失败，自动浏览已暂停");
       }
@@ -117,8 +117,8 @@
           })
         ]);
         clearTimeout(timeoutId);
-        if (!response?.ok && ["JEV_UNAUTHORIZED", "JEV_FORBIDDEN", "JEV_RATE_LIMIT", "RATE_LIMIT"].includes(response?.error?.code)) {
-          this.stop("Jev 权限或限流错误，自动浏览已暂停");
+        if (!response?.ok && ["JEV_UNAUTHORIZED", "JEV_FORBIDDEN", "JEV_RATE_LIMIT", "RATE_LIMIT", "DAILY_BUDGET"].includes(response?.error?.code)) {
+          this.stop("Jev 权限、限流或额度已用尽，自动浏览已暂停");
           break;
         }
         await this.wait(this.config?.browsing?.dwellMs || 5000, token);

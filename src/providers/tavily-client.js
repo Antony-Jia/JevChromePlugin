@@ -29,7 +29,7 @@
       this.timeoutMs = 20000;
     }
 
-    async search(query) {
+    async search(query, options = {}) {
       if (!this.config.apiKey) throw new ProviderError("TAVILY_NO_API_KEY", "Configure a Tavily API key in extension settings.", false);
       const cleanQuery = String(query || "").replace(/\u0000/g, "").trim().slice(0, 600);
       if (!cleanQuery) throw new ProviderError("TAVILY_BAD_QUERY", "The search query is empty.", false);
@@ -37,6 +37,7 @@
         "https://api.tavily.com/search",
         {
           method: "POST",
+          signal: options.signal,
           headers: {
             Authorization: `Bearer ${this.config.apiKey}`,
             "Content-Type": "application/json"

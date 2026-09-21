@@ -5,6 +5,10 @@
 })(globalThis, function () {
   "use strict";
 
+  const ADAPTER_VERSION = "x-dom-adapter-1.1";
+  const TEXT_LIMIT = 12000;
+  const QUOTE_LIMIT = 6000;
+
   function normalizeText(value) {
     return String(value || "")
       .replace(/\u00a0/g, " ")
@@ -81,7 +85,7 @@
     const text = textFrom(textElement) || textFrom(quoteRoot);
     if (!text) return undefined;
     const authorHandle = readHandle(quoteRoot.querySelector('[data-testid="User-Name"], [data-testid="userName"]') || quoteRoot);
-    return { ...(authorHandle ? { authorHandle } : {}), text: text.slice(0, 6000) };
+    return { ...(authorHandle ? { authorHandle } : {}), text: text.slice(0, QUOTE_LIMIT), truncated: text.length > QUOTE_LIMIT };
   }
 
   function readMetrics(article) {
@@ -122,7 +126,8 @@
       const quote = readQuote(article);
       const textElements = ownedElements(article, '[data-testid="tweetText"]')
         .filter((element) => !element.closest('[data-testid="quoteTweet"], blockquote'));
-      const text = textElements.map(textFrom).filter(Boolean).join("\n").slice(0, 12000);
+      const joinedText = textElements.map(textFrom).filter(Boolean).join("\n");
+      const text = joinedText.slice(0, TEXT_LIMIT);
       if (!text) return null;
 
       const permalink = findPermalink(article);
@@ -136,12 +141,24 @@
       }
       const timestamp = ownedElements(article, "time[datetime]")[0]?.getAttribute("datetime") || undefined;
       const author = readAuthor(article);
-      const mediaAltTexts = ownedElements(article, "img[alt]")
-        .filter((image) => !image.closest('[data-testid*="Avatar"], [data-testid*="avatar"]'))
-        .map((image) => normalizeText(image.getAttribute("alt")))
+      const mediaElements = ownedElements(article, "img, video")
+        .filter((element) => !element.closest('[data-testid*="Avatar"], [data-testid*="avatar"]'));
+      const mediaAltTexts = mediaElements
+        .map((element) => normalizeText(element.getAttribute("alt") || element.getAttribute("aria-label")))
         .filter((alt) => alt.length >= 4)
         .filter((alt, index, list) => list.indexOf(alt) === index)
         .slice(0, 20);
+      const suspectedCollapsed = ownedElements(article, '[data-testid="tweetText"] a, [data-testid*="show_more"], [data-testid*="show-more"], [data-testid*="showMore"]')
+        .some((element) => /show more|显示更多|展开全文|展开/i.test(textFrom(element) || element.getAttribute("aria-label") || ""));
+      const extractionQuality = {
+        adapterVersion: ADAPTER_VERSION,
+        textTruncated: joinedText.length > TEXT_LIMIT,
+        quoteTruncated: quote?.truncated === true,
+        suspectedCollapsed,
+        hasMedia: mediaElements.length > 0,
+        mediaAltOnly: mediaElements.length > 0,
+        threadContextProvided: false
+      };
 
       return {
         platform: "x",
@@ -150,9 +167,10 @@
         ...(author.authorName ? { authorName: author.authorName.slice(0, 200) } : {}),
         ...(author.authorHandle ? { authorHandle: author.authorHandle.slice(0, 200) } : {}),
         text,
-        ...(quote ? { quotedPost: quote } : {}),
+        ...(quote ? { quotedPost: { ...(quote.authorHandle ? { authorHandle: quote.authorHandle } : {}), text: quote.text } } : {}),
         ...(mediaAltTexts.length ? { mediaAltTexts } : {}),
         ...(timestamp ? { timestamp: timestamp.slice(0, 80) } : {}),
+        extractionQuality,
         ...(readMetrics(article) ? { metrics: readMetrics(article) } : {})
       };
     }

@@ -5,6 +5,10 @@
 })(globalThis, function () {
   "use strict";
 
+  const ADAPTER_VERSION = "weibo-dom-adapter-1.1";
+  const TEXT_LIMIT = 12000;
+  const QUOTE_LIMIT = 6000;
+
   function normalizeText(value) {
     return String(value || "")
       .replace(/\u00a0/g, " ")
@@ -78,7 +82,8 @@
     const candidates = ownedElements(article, '.wbpro-feed-ogText, [class*="_wbtext_"], [class*="wbtext"]')
       .filter((element) => !element.closest(".retweet"));
     const texts = candidates.map(textFrom).filter(Boolean);
-    return [...new Set(texts)].join("\n").slice(0, 12000);
+    const joined = [...new Set(texts)].join("\n");
+    return { text: joined.slice(0, TEXT_LIMIT), truncated: joined.length > TEXT_LIMIT };
   }
 
   function readQuote(article) {
@@ -89,7 +94,16 @@
     if (!text) return undefined;
     const authorLink = quoteRoot.querySelector("a[usercard], a[aria-label]");
     const authorName = normalizeText(authorLink?.getAttribute("aria-label") || authorLink?.querySelector("span[title]")?.getAttribute("title") || textFrom(authorLink));
-    return { ...(authorName ? { authorHandle: `@${authorName}`.slice(0, 200) } : {}), text: text.slice(0, 6000) };
+    return {
+      ...(authorName ? { authorHandle: `@${authorName}`.slice(0, 200) } : {}),
+      text: text.slice(0, QUOTE_LIMIT),
+      truncated: text.length > QUOTE_LIMIT
+    };
+  }
+
+  function readCollapsedHint(article) {
+    return ownedElements(article, 'a, button, [class*="expand"]')
+      .some((element) => /^(展开|展开全文|全文|收起)$/.test(textFrom(element) || ""));
   }
 
   function readMetrics(article) {
@@ -124,25 +138,37 @@
       const permalink = findPermalink(article);
       if (!permalink) return null;
       const quotedPost = readQuote(article);
-      const text = readMainText(article) || (quotedPost ? "转发微博" : "");
+      const main = readMainText(article);
+      const text = main.text || (quotedPost ? "转发微博" : "");
       if (!text) return null;
       const author = readAuthor(article);
       const timestamp = permalink.anchor.getAttribute("title") || undefined;
-      const mediaAltTexts = ownedElements(article, '.wbpro-feed-content img[alt], video[aria-label]')
+      const mediaElements = ownedElements(article, '.wbpro-feed-content img, .wbpro-feed-content video, video[aria-label]');
+      const mediaAltTexts = mediaElements
         .map((element) => normalizeText(element.getAttribute("alt") || element.getAttribute("aria-label")))
         .filter((item) => item.length >= 4)
         .filter((item, index, list) => list.indexOf(item) === index)
         .slice(0, 20);
       const metrics = readMetrics(article);
+      const extractionQuality = {
+        adapterVersion: ADAPTER_VERSION,
+        textTruncated: main.truncated,
+        quoteTruncated: quotedPost?.truncated === true,
+        suspectedCollapsed: readCollapsedHint(article),
+        hasMedia: mediaElements.length > 0,
+        mediaAltOnly: mediaElements.length > 0,
+        threadContextProvided: false
+      };
       return {
         platform: "weibo",
         postId: `weibo:${permalink.uid}:${permalink.shortId}`,
         url: permalink.url,
         ...author,
         text,
-        ...(quotedPost ? { quotedPost } : {}),
+        ...(quotedPost ? { quotedPost: { ...(quotedPost.authorHandle ? { authorHandle: quotedPost.authorHandle } : {}), text: quotedPost.text } } : {}),
         ...(mediaAltTexts.length ? { mediaAltTexts } : {}),
         ...(timestamp ? { timestamp: timestamp.slice(0, 80) } : {}),
+        extractionQuality,
         ...(metrics ? { metrics } : {})
       };
     }

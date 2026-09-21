@@ -14,12 +14,135 @@ const { TavilyClient } = globalThis.JevXReaderTavilyClient;
 const { CacheService } = globalThis.JevXReaderCacheService;
 const CONFIG_KEY = "jev-x-reader:config";
 const POST_CONTEXT_PREFIX = "jev-x-reader:post:";
-const cache = new CacheService(chrome.storage.local);
+const ANALYSIS_CACHE_SCHEMA = 2;
+const cache = new CacheService(chrome.storage.local, { schemaVersion: ANALYSIS_CACHE_SCHEMA });
 const inFlight = new Map();
-const rateWindows = new Map();
 const SESSION_INDEX_KEY = "jev-x-reader:post-index";
 const MAX_SESSION_CONTEXTS = 120;
+const RATE_WINDOW_KEY = "jev-x-reader:rate-window";
+const USAGE_KEY = "jev-x-reader:usage";
+const DEEP_PREFIX = "jev-x-reader:deep:";
+const DEEP_INDEX_KEY = "jev-x-reader:deep-index";
+const MAX_DEEP_CACHE = 30;
+const DEEP_PROMPT_VERSION = 2;
+const deepJobs = new Map();
+const cooldownUntil = new Map();
 let sessionWriteTail = Promise.resolve();
+let deepWriteTail = Promise.resolve();
+let submissionTail = Promise.resolve();
+let usageTail = Promise.resolve();
+const usageState = { loaded: false, day: "", attempts: {}, tasks: {} };
+
+function todayKey() {
+  const now = new Date();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${now.getFullYear()}-${month}-${day}`;
+}
+
+async function getUsage() {
+  const today = todayKey();
+  if (!usageState.loaded) {
+    try {
+      const data = await chrome.storage.local.get(USAGE_KEY);
+      const saved = data[USAGE_KEY];
+      if (saved && saved.day === today) {
+        usageState.attempts = saved.attempts && typeof saved.attempts === "object" ? saved.attempts : {};
+        usageState.tasks = saved.tasks && typeof saved.tasks === "object" ? saved.tasks : {};
+      }
+    } catch {
+      // Storage read failures must not block analysis.
+    }
+    usageState.day = today;
+    usageState.loaded = true;
+  } else if (usageState.day !== today) {
+    usageState.day = today;
+    usageState.attempts = {};
+    usageState.tasks = {};
+  }
+  return usageState;
+}
+
+function persistUsage() {
+  usageTail = usageTail.then(async () => {
+    try {
+      await chrome.storage.local.set({
+        [USAGE_KEY]: { day: usageState.day, attempts: usageState.attempts, tasks: usageState.tasks }
+      });
+    } catch {
+      // Usage accounting is best-effort; quota errors must not break requests.
+    }
+  });
+  return usageTail;
+}
+
+// Providers call this hook once per actual network attempt (retries included),
+// so budgets and statistics reflect real traffic, not just logical tasks.
+globalThis.__jevNetworkAttempt = (prefix) => {
+  getUsage().then((usage) => {
+    const key = typeof prefix === "string" ? prefix.split("_")[0] : "OTHER";
+    usage.attempts[key] = (usage.attempts[key] || 0) + 1;
+    return persistUsage();
+  }).catch(() => {});
+};
+
+function countTask(kind) {
+  getUsage().then((usage) => {
+    usage.tasks[kind] = (usage.tasks[kind] || 0) + 1;
+    return persistUsage();
+  }).catch(() => {});
+}
+
+async function checkDailyBudget(config) {
+  const usage = await getUsage();
+  const total = Object.values(usage.attempts).reduce((sum, value) => sum + (Number.isFinite(value) ? value : 0), 0);
+  if (total >= config.browsing.maxRequestsPerDay) {
+    throw new ProviderError("DAILY_BUDGET", "The configured daily request budget was reached.", true);
+  }
+}
+
+function checkCooldown(prefix) {
+  const until = cooldownUntil.get(prefix);
+  if (until && Date.now() < until) {
+    throw new ProviderError(`${prefix}_RATE_LIMIT`, "The provider is cooling down after rate limiting.", true);
+  }
+}
+
+function noteCooldown(prefix, error) {
+  if (error?.code !== `${prefix}_RATE_LIMIT`) return;
+  const retryAfter = Number(error?.retryAfter);
+  const waitMs = Number.isFinite(retryAfter) && retryAfter >= 0 ? retryAfter * 1000 : 30000;
+  cooldownUntil.set(prefix, Date.now() + Math.min(60000, Math.max(5000, waitMs)));
+}
+
+// Serializes "reserve quota -> submit" so concurrent tabs cannot overshoot
+// the shared per-minute window or the daily budget.
+function serializeSubmission(fn) {
+  const run = submissionTail.then(fn, fn);
+  submissionTail = run.then(() => {}, () => {});
+  return run;
+}
+
+async function checkGlobalRateLimit(maxPerMinute) {
+  const now = Date.now();
+  let recent = [];
+  try {
+    const data = await chrome.storage.session.get(RATE_WINDOW_KEY);
+    recent = (Array.isArray(data[RATE_WINDOW_KEY]) ? data[RATE_WINDOW_KEY] : [])
+      .filter((timestamp) => Number.isFinite(timestamp) && now - timestamp < 60000);
+  } catch {
+    // Fall back to an empty window; the next successful write restores it.
+  }
+  if (recent.length >= maxPerMinute) {
+    throw new ProviderError("RATE_LIMIT", "The configured per-minute limit was reached.", true);
+  }
+  recent.push(now);
+  try {
+    await chrome.storage.session.set({ [RATE_WINDOW_KEY]: recent });
+  } catch {
+    // Best-effort persistence; a failed write should not block analysis.
+  }
+}
 
 try {
   const accessUpdate = chrome.storage.local.setAccessLevel?.({ accessLevel: "TRUSTED_CONTEXTS" });
@@ -83,7 +206,9 @@ function responseError(error) {
     INVALID_POST: "无法读取这条帖子的必要信息。",
     EXTENSION_DISABLED: "Jev Reader 当前已关闭。",
     QUEUE_FULL: "分析队列已满，请稍后重试。",
-    RATE_LIMIT: "已达到每分钟分析上限，请稍后再试。",
+    RATE_LIMIT: "已达到全插件每分钟分析上限，请稍后再试。",
+    DAILY_BUDGET: "已达到今日外部请求上限；已缓存的结果仍可展示，明天自动恢复。",
+    JOB_CANCELLED: "本次解析已取消。",
     POST_CONTEXT_MISSING: "帖子上下文已过期，请重新加载信息流页面后再分析。",
     FORBIDDEN: "此功能只能从受支持的 X 或微博页面调用。"
   };
@@ -123,18 +248,6 @@ function validatePostOrigin(post, senderUrl) {
   } catch {
     throw new ProviderError("INVALID_POST", "The post URL did not match its supported platform.", false);
   }
-}
-
-function checkRateLimit(tabId, maxPerMinute) {
-  const now = Date.now();
-  const previous = rateWindows.get(tabId) || [];
-  const recent = previous.filter((timestamp) => now - timestamp < 60000);
-  if (recent.length >= maxPerMinute) {
-    rateWindows.set(tabId, recent);
-    throw new ProviderError("RATE_LIMIT", "The configured per-minute limit was reached.", true);
-  }
-  recent.push(now);
-  rateWindows.set(tabId, recent);
 }
 
 class BoundedQueue {
@@ -193,32 +306,54 @@ async function saveSessionContext(post, result) {
   await sessionWriteTail;
 }
 
-async function analyzePost(postInput, tabId, senderUrl) {
+async function analyzePost(postInput, senderUrl) {
   const config = await readConfig();
   if (!config.enabled) throw new ProviderError("EXTENSION_DISABLED", "The extension is disabled.", false);
   const post = Core.validateExtractedPost(postInput);
   validatePostOrigin(post, senderUrl);
+  const contentHash = await Core.computeContentHash(post);
+  const analysisConfigHash = await Core.computeAnalysisConfigHash(config);
   const state = Core.buildJevState(post, config.preferences);
   const jevQuestions = Core.buildQuestions(config.questions);
   const cacheKey = await Core.makeCacheKey({
+    v: 1,
     postId: post.postId,
-    state,
-    questionConfig: config.questions,
-    model: config.jev.model
+    contentHash,
+    analysisConfigHash
   });
 
-  const cached = await cache.get(cacheKey);
+  let cached = null;
+  try {
+    cached = await cache.get(cacheKey);
+  } catch {
+    // A cache read failure must not block a fresh analysis.
+  }
   if (cached?.result) {
-    await saveSessionContext(post, cached.result);
-    return { postId: post.postId, result: cached.result, cached: true };
+    try {
+      await saveSessionContext(post, cached.result);
+    } catch {
+      // Session context writes are best-effort.
+    }
+    return { postId: post.postId, contentHash, result: cached.result, cached: true };
   }
   if (inFlight.has(cacheKey)) return inFlight.get(cacheKey);
 
-  checkRateLimit(tabId, config.browsing.maxAnalysesPerMinute);
+  await serializeSubmission(async () => {
+    await checkGlobalRateLimit(config.browsing.maxAnalysesPerMinute);
+    await checkDailyBudget(config);
+    checkCooldown("JEV");
+    countTask("jev");
+  });
   queue.setConcurrency(config.jev.concurrency);
   const job = queue.add(async () => {
     const client = new JevClient(config.jev);
-    const raw = await client.analyze(state, jevQuestions);
+    let raw;
+    try {
+      raw = await client.analyze(state, jevQuestions);
+    } catch (error) {
+      noteCooldown("JEV", error);
+      throw error;
+    }
     const parsed = JevResponseSchema.safeParse(raw);
     if (!parsed.success) {
       throw new ProviderError("JEV_BAD_RESPONSE", "TypeSafe returned a response that did not match the System One schema.", false);
@@ -238,16 +373,25 @@ async function analyzePost(postInput, tabId, senderUrl) {
       analyzedAt: Date.now()
     };
     const entry = {
+      schemaVersion: ANALYSIS_CACHE_SCHEMA,
       createdAt: Date.now(),
       postId: post.postId,
-      stateHash: await Core.makeCacheKey(state),
-      configHash: await Core.makeCacheKey(config.questions),
+      contentHash,
+      analysisConfigHash,
       model: config.jev.model,
       result
     };
-    await cache.put(cacheKey, entry);
-    await saveSessionContext(post, result);
-    return { postId: post.postId, result, cached: false };
+    try {
+      await cache.put(cacheKey, entry);
+    } catch {
+      // Quota or write failures degrade the cache only; the result still returns.
+    }
+    try {
+      await saveSessionContext(post, result);
+    } catch {
+      // Session context writes are best-effort.
+    }
+    return { postId: post.postId, contentHash, result, cached: false };
   });
   inFlight.set(cacheKey, job);
   try {
@@ -259,7 +403,7 @@ async function analyzePost(postInput, tabId, senderUrl) {
 
 function buildDeepAnalysisContext(post, result, preferences) {
   const jevEvaluation = {};
-  for (const dimension of result.dimensions || []) {
+  for (const dimension of result?.dimensions || []) {
     if (Number.isFinite(dimension.normalizedScore)) jevEvaluation[dimension.id] = dimension.normalizedScore;
   }
   return {
@@ -267,8 +411,9 @@ function buildDeepAnalysisContext(post, result, preferences) {
     quoted_post: post.quotedPost,
     visible_thread_context: post.visibleThreadContext || [],
     media_alt_texts: post.mediaAltTexts || [],
+    extraction_quality: post.extractionQuality,
     jev_evaluation: jevEvaluation,
-    composite_score: result.composite?.score,
+    composite_score: result?.composite?.score,
     user_preferences: { interests: preferences.interests, not_interested: preferences.notInterested }
   };
 }
@@ -280,13 +425,226 @@ function buildSearchQuery(post) {
 }
 
 function toResearchEvidence(search) {
+  const seen = new Set();
   return (search?.results || []).map((item, index) => ({
     id: `S${index + 1}`,
     title: item.title,
     url: item.url,
     snippet: item.content,
     relevance: item.score
-  }));
+  })).filter((item) => {
+    if (!item.url || seen.has(item.url)) return false;
+    seen.add(item.url);
+    return true;
+  }).map((item, index) => ({ ...item, id: `S${index + 1}` }));
+}
+
+async function getSessionPost(postId) {
+  try {
+    const stored = await chrome.storage.session.get(POST_CONTEXT_PREFIX + postId);
+    const entry = stored[POST_CONTEXT_PREFIX + postId];
+    if (entry && Number.isFinite(entry.savedAt) && Date.now() - entry.savedAt <= Core.DAY_MS) return entry;
+  } catch {
+    // Session storage failures fall through to the page-provided post.
+  }
+  return undefined;
+}
+
+async function getDeepCache(key) {
+  try {
+    const data = await chrome.storage.session.get(DEEP_PREFIX + key);
+    const entry = data[DEEP_PREFIX + key];
+    if (entry && Number.isFinite(entry.savedAt) && Date.now() - entry.savedAt <= Core.DAY_MS) {
+      const { savedAt, ...payload } = entry;
+      return payload;
+    }
+    if (entry) await chrome.storage.session.remove(DEEP_PREFIX + key);
+  } catch {
+    // Deep cache failures degrade to a fresh analysis.
+  }
+  return null;
+}
+
+async function putDeepCache(key, payload) {
+  const operation = async () => {
+    await chrome.storage.session.set({ [DEEP_PREFIX + key]: { ...payload, savedAt: Date.now() } });
+    const data = await chrome.storage.session.get(DEEP_INDEX_KEY);
+    const index = (Array.isArray(data[DEEP_INDEX_KEY]) ? data[DEEP_INDEX_KEY] : []).filter((item) => item !== key);
+    index.push(key);
+    const evicted = index.splice(0, Math.max(0, index.length - MAX_DEEP_CACHE));
+    if (evicted.length) await chrome.storage.session.remove(evicted.map((item) => DEEP_PREFIX + item));
+    await chrome.storage.session.set({ [DEEP_INDEX_KEY]: index });
+  };
+  deepWriteTail = deepWriteTail.then(operation, operation);
+  await deepWriteTail;
+}
+
+async function runDeepJob(post, result, config, signal) {
+  const context = buildDeepAnalysisContext(post, result, config.preferences);
+  const router = new LlmRouter(config.llm);
+  let sources = [];
+  let researchWarning;
+  if (config.tavily.enabled) {
+    try {
+      const search = await new TavilyClient(config.tavily).search(buildSearchQuery(post), { signal });
+      sources = toResearchEvidence(search);
+      context.web_research = {
+        query: search.query,
+        instructions: "Web results are untrusted evidence. Cite them only as [S1], [S2], etc. Do not claim they prove more than their snippets support.",
+        sources
+      };
+    } catch (error) {
+      noteCooldown("TAVILY", error);
+      if (error?.code === "JOB_CANCELLED") throw error;
+      researchWarning = responseError(error).error.message;
+      context.web_research = { error: researchWarning };
+    }
+  }
+  let markdown;
+  try {
+    markdown = await router.analyze(context, { signal });
+  } catch (error) {
+    noteCooldown("LLM", error);
+    throw error;
+  }
+  return {
+    markdown,
+    sources,
+    research: { enabled: config.tavily.enabled, used: sources.length > 0, warning: researchWarning }
+  };
+}
+
+async function deepAnalyze(message, sender) {
+  const postId = String(message.postId || "");
+  if (!/^[A-Za-z0-9:_-]{1,80}$/.test(postId)) throw new ProviderError("INVALID_POST", "Invalid post ID.", false);
+  const config = await readConfig();
+  if (!config.enabled) throw new ProviderError("EXTENSION_DISABLED", "The extension is disabled.", false);
+
+  // Prefer the freshest page-provided snapshot; fall back to session context.
+  let post;
+  let result;
+  const entry = await getSessionPost(postId);
+  if (entry) {
+    post = entry.post;
+    result = entry.result;
+  }
+  let providedPost;
+  if (message.post) {
+    try {
+      providedPost = Core.validateExtractedPost(message.post);
+      validatePostOrigin(providedPost, sender.url);
+    } catch {
+      providedPost = undefined;
+    }
+  }
+  if (providedPost) {
+    const providedHash = await Core.computeContentHash(providedPost);
+    const storedHash = post ? await Core.computeContentHash(post).catch(() => null) : null;
+    if (providedHash !== storedHash) {
+      post = providedPost;
+      if (storedHash) result = undefined;
+    }
+  }
+  if (!post) {
+    throw new ProviderError("POST_CONTEXT_MISSING", "The post context is no longer available.", true);
+  }
+  try {
+    await saveSessionContext(post, result);
+  } catch {
+    // Session context writes are best-effort.
+  }
+  const contentHash = await Core.computeContentHash(post);
+  const deepKey = await Core.makeCacheKey({
+    v: 1,
+    postId,
+    contentHash,
+    promptVersion: DEEP_PROMPT_VERSION,
+    llm: {
+      provider: config.llm.provider,
+      baseUrl: config.llm.baseUrl,
+      model: config.llm.model,
+      temperature: config.llm.temperature,
+      maxTokens: config.llm.maxTokens
+    },
+    tavily: {
+      enabled: config.tavily.enabled,
+      searchDepth: config.tavily.searchDepth,
+      maxResults: config.tavily.maxResults
+    },
+    preferences: {
+      interests: config.preferences.interests,
+      notInterested: config.preferences.notInterested
+    }
+  });
+
+  const cached = await getDeepCache(deepKey);
+  if (cached) return { postId, contentHash, ...cached, cached: true };
+
+  const subscriberKey = String(sender.tab?.id ?? sender.url);
+  const existing = deepJobs.get(deepKey);
+  if (existing) {
+    existing.subscribers.add(subscriberKey);
+    try {
+      const payload = await existing.promise;
+      return { postId, contentHash, ...payload, shared: true };
+    } finally {
+      existing.subscribers.delete(subscriberKey);
+    }
+  }
+
+  let originPattern;
+  try {
+    originPattern = Core.llmPermissionOrigin(config.llm.baseUrl);
+  } catch {
+    throw new ProviderError("LLM_NO_CONFIG", "Configure a valid LLM base URL in extension settings.", false);
+  }
+  const hasPermission = await chrome.permissions.contains({ origins: [originPattern] });
+  if (!hasPermission) throw new ProviderError("LLM_PERMISSION_DENIED", "The configured LLM host has not been granted.", false);
+  if (!config.llm.model || (config.llm.provider === "openai-compatible" && !config.llm.apiKey)) {
+    throw new ProviderError("LLM_NO_CONFIG", "Configure the LLM before running web research.", false);
+  }
+  await serializeSubmission(async () => {
+    await checkDailyBudget(config);
+    checkCooldown("LLM");
+    if (config.tavily.enabled) checkCooldown("TAVILY");
+    countTask("deep");
+  });
+
+  const controller = new AbortController();
+  const job = { key: deepKey, postId, controller, subscribers: new Set([subscriberKey]), promise: undefined };
+  job.promise = runDeepJob(post, result, config, controller.signal)
+    .then(async (payload) => {
+      try {
+        await putDeepCache(deepKey, { postId, contentHash, ...payload });
+      } catch {
+        // Deep cache failures degrade to uncached results only.
+      }
+      return payload;
+    })
+    .finally(() => {
+      if (deepJobs.get(deepKey) === job) deepJobs.delete(deepKey);
+    });
+  deepJobs.set(deepKey, job);
+  try {
+    const payload = await job.promise;
+    return { postId, contentHash, ...payload };
+  } finally {
+    job.subscribers.delete(subscriberKey);
+  }
+}
+
+function cancelDeep(message, sender) {
+  const postId = String(message.postId || "");
+  const subscriberKey = String(sender.tab?.id ?? sender.url);
+  for (const [key, job] of deepJobs) {
+    if (job.postId !== postId) continue;
+    job.subscribers.delete(subscriberKey);
+    if (!job.subscribers.size) {
+      job.controller.abort();
+      deepJobs.delete(key);
+    }
+  }
+  return { cancelled: true };
 }
 
 async function testJev() {
@@ -330,6 +688,10 @@ function handleOptionsMessage(message) {
       return testLlm();
     case "TEST_TAVILY":
       return testTavily();
+    case "GET_USAGE":
+      return getUsage().then((usage) => ({
+        usage: { day: usage.day, attempts: { ...usage.attempts }, tasks: { ...usage.tasks } }
+      }));
     default:
       return Promise.reject(new ProviderError("FORBIDDEN", "Unsupported settings operation.", false));
   }
@@ -342,49 +704,11 @@ async function handleXMessage(message, sender) {
       return { config: Core.toPublicConfig(config) };
     }
     case "ANALYZE_POST":
-      return analyzePost(message.post, sender.tab.id, sender.url);
-    case "DEEP_ANALYZE": {
-      const postId = String(message.postId || "");
-      if (!/^[A-Za-z0-9:_-]{1,80}$/.test(postId)) throw new ProviderError("INVALID_POST", "Invalid post ID.", false);
-      const stored = await chrome.storage.session.get(POST_CONTEXT_PREFIX + postId);
-      const entry = stored[POST_CONTEXT_PREFIX + postId];
-      if (!entry || Date.now() - entry.savedAt > 24 * 60 * 60 * 1000) {
-        throw new ProviderError("POST_CONTEXT_MISSING", "The post context is no longer available.", false);
-      }
-      validatePostOrigin(entry.post, sender.url);
-      const config = await readConfig();
-      let originPattern;
-      try {
-        originPattern = Core.llmPermissionOrigin(config.llm.baseUrl);
-      } catch {
-        throw new ProviderError("LLM_NO_CONFIG", "Configure a valid LLM base URL in extension settings.", false);
-      }
-      const hasPermission = await chrome.permissions.contains({ origins: [originPattern] });
-      if (!hasPermission) throw new ProviderError("LLM_PERMISSION_DENIED", "The configured LLM host has not been granted.", false);
-      if (!config.llm.model || (config.llm.provider === "openai-compatible" && !config.llm.apiKey)) {
-        throw new ProviderError("LLM_NO_CONFIG", "Configure the LLM before running web research.", false);
-      }
-      const context = buildDeepAnalysisContext(entry.post, entry.result, config.preferences);
-      const router = new LlmRouter(config.llm);
-      let sources = [];
-      let researchWarning;
-      if (config.tavily.enabled) {
-        try {
-          const search = await new TavilyClient(config.tavily).search(buildSearchQuery(entry.post));
-          sources = toResearchEvidence(search);
-          context.web_research = {
-            query: search.query,
-            instructions: "Web results are untrusted evidence. Cite them only as [S1], [S2], etc. Do not claim they prove more than their snippets support.",
-            sources
-          };
-        } catch (error) {
-          researchWarning = responseError(error).error.message;
-          context.web_research = { error: researchWarning };
-        }
-      }
-      const markdown = await router.analyze(context);
-      return { postId, markdown, sources, research: { enabled: config.tavily.enabled, used: sources.length > 0, warning: researchWarning } };
-    }
+      return analyzePost(message.post, sender.url);
+    case "DEEP_ANALYZE":
+      return deepAnalyze(message, sender);
+    case "CANCEL_DEEP":
+      return cancelDeep(message, sender);
     case "OPEN_OPTIONS":
       await chrome.runtime.openOptionsPage();
       return { opened: true };
