@@ -115,6 +115,10 @@ function noteCooldown(prefix, error) {
   cooldownUntil.set(prefix, Date.now() + Math.min(60000, Math.max(5000, waitMs)));
 }
 
+function jevCooldownPrefix(config) {
+  return config.jev.provider === "openrouter" ? "OPENROUTER_JEV" : "JEV";
+}
+
 // Serializes "reserve quota -> submit" so concurrent tabs cannot overshoot
 // the shared per-minute window or the daily budget.
 function serializeSubmission(fn) {
@@ -172,17 +176,19 @@ function isSupportedSender(sender) {
 }
 
 function responseError(error) {
-  const code = typeof error?.code === "string" ? error.code : "UNKNOWN";
+  const rawCode = typeof error?.code === "string" ? error.code : "UNKNOWN";
+  const code = rawCode.startsWith("OPENROUTER_JEV_") ? `JEV_${rawCode.slice("OPENROUTER_JEV_".length)}` : rawCode;
   const knownMessages = {
-    JEV_NO_API_KEY: "请先在扩展设置中配置 TypeSafe API Key。",
-    JEV_UNAUTHORIZED: "TypeSafe API Key 无效或已失效。",
-    JEV_FORBIDDEN: "TypeSafe API 拒绝了本次请求。",
-    JEV_RATE_LIMIT: "TypeSafe 请求过于频繁，请稍后重试。",
-    JEV_TIMEOUT: "TypeSafe 请求超时。",
-    JEV_NETWORK: "无法连接 TypeSafe 服务。",
-    JEV_SERVER_ERROR: "TypeSafe 服务暂时不可用。",
-    JEV_BAD_RESPONSE: "TypeSafe 返回了无法识别的结果。",
-    JEV_REQUEST_FAILED: "TypeSafe 请求失败。",
+    JEV_NO_API_KEY: "请先在扩展设置中配置当前 Jev 服务商的 API Key。",
+    JEV_UNAUTHORIZED: "Jev API Key 无效或已失效。",
+    JEV_FORBIDDEN: "Jev 服务拒绝了本次请求。",
+    JEV_PAYMENT_REQUIRED: "OpenRouter 账户额度不足或尚未开通账单。",
+    JEV_RATE_LIMIT: "Jev 请求过于频繁，请稍后重试。",
+    JEV_TIMEOUT: "Jev 请求超时。",
+    JEV_NETWORK: "无法连接 Jev 服务。",
+    JEV_SERVER_ERROR: "Jev 服务暂时不可用。",
+    JEV_BAD_RESPONSE: "Jev 返回了无法识别的结果。",
+    JEV_REQUEST_FAILED: "Jev 请求失败。",
     LLM_NO_CONFIG: "请在扩展设置中补齐 LLM 地址、模型和 API Key。",
     LLM_PERMISSION_DENIED: "请在扩展设置中测试 LLM 连接并授予该服务的主机访问权限。",
     LLM_UNAUTHORIZED: "LLM API Key 无效或已失效。",
@@ -338,10 +344,11 @@ async function analyzePost(postInput, senderUrl) {
   }
   if (inFlight.has(cacheKey)) return inFlight.get(cacheKey);
 
+  const cooldownPrefix = jevCooldownPrefix(config);
   await serializeSubmission(async () => {
     await checkGlobalRateLimit(config.browsing.maxAnalysesPerMinute);
     await checkDailyBudget(config);
-    checkCooldown("JEV");
+    checkCooldown(cooldownPrefix);
     countTask("jev");
   });
   queue.setConcurrency(config.jev.concurrency);
@@ -351,18 +358,18 @@ async function analyzePost(postInput, senderUrl) {
     try {
       raw = await client.analyze(state, jevQuestions);
     } catch (error) {
-      noteCooldown("JEV", error);
+      noteCooldown(cooldownPrefix, error);
       throw error;
     }
     const parsed = JevResponseSchema.safeParse(raw);
     if (!parsed.success) {
-      throw new ProviderError("JEV_BAD_RESPONSE", "TypeSafe returned a response that did not match the System One schema.", false);
+      throw new ProviderError("JEV_BAD_RESPONSE", "Jev returned a response that did not match the System One schema.", false);
     }
     let dimensions;
     try {
       dimensions = Core.normalizeJevAnswers(parsed.data, config.questions);
     } catch {
-      throw new ProviderError("JEV_BAD_RESPONSE", "TypeSafe returned a response that did not match the configured questions.", false);
+      throw new ProviderError("JEV_BAD_RESPONSE", "Jev returned a response that did not match the configured questions.", false);
     }
     const composite = Core.calculateComposite(dimensions, config.questions);
     const result = {
@@ -656,7 +663,7 @@ async function testJev() {
   );
   const parsed = JevResponseSchema.safeParse(response);
   if (!parsed.success || !parsed.data.answers.connection_check || parsed.data.answers.connection_check.type !== "noul") {
-    throw new ProviderError("JEV_BAD_RESPONSE", "TypeSafe returned an unexpected connection-test response.", false);
+    throw new ProviderError("JEV_BAD_RESPONSE", "Jev returned an unexpected connection-test response.", false);
   }
   return { ok: true, model: typeof response.model === "string" ? response.model : config.jev.model };
 }
@@ -702,6 +709,26 @@ async function handleXMessage(message, sender) {
     case "GET_PUBLIC_CONFIG": {
       const config = await readConfig();
       return { config: Core.toPublicConfig(config) };
+    }
+    case "PATCH_SETTINGS": {
+      // Feed pages may only flip the two toolbar toggles; everything else
+      // stays owned by the options page.
+      const patch = message.patch && typeof message.patch === "object" && !Array.isArray(message.patch) ? message.patch : {};
+      const config = await readConfig();
+      const merged = {
+        ...config,
+        scoring: { ...config.scoring },
+        browsing: { ...config.browsing }
+      };
+      if (patch.scoring && typeof patch.scoring === "object" && patch.scoring.maskEnabled !== undefined) {
+        merged.scoring.maskEnabled = patch.scoring.maskEnabled === true;
+      }
+      if (patch.browsing && typeof patch.browsing === "object" && patch.browsing.autoScroll !== undefined) {
+        merged.browsing.autoScroll = patch.browsing.autoScroll === true;
+      }
+      const next = Core.normalizeConfig(merged);
+      await chrome.storage.local.set({ [CONFIG_KEY]: next });
+      return { config: Core.toPublicConfig(next) };
     }
     case "ANALYZE_POST":
       return analyzePost(message.post, sender.url);

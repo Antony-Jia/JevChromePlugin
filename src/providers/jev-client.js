@@ -38,7 +38,8 @@
       }
       if (!response.ok) {
         const status = response.status;
-        const code = status === 401 ? `${prefix}_UNAUTHORIZED`
+        const code = status === 402 && prefix === "OPENROUTER_JEV" ? `${prefix}_PAYMENT_REQUIRED`
+          : status === 401 ? `${prefix}_UNAUTHORIZED`
           : status === 403 ? `${prefix}_FORBIDDEN`
             : [429, 432, 433].includes(status) ? `${prefix}_RATE_LIMIT`
               : status >= 500 ? `${prefix}_SERVER_ERROR`
@@ -80,15 +81,23 @@
 
   class JevClient {
     constructor(config) {
-      this.apiKey = config.apiKey;
-      this.model = config.model || "jev-latest";
+      this.provider = config.provider === "openrouter" ? "openrouter" : "typesafe";
+      this.errorPrefix = this.provider === "openrouter" ? "OPENROUTER_JEV" : "JEV";
+      this.apiKey = this.provider === "openrouter" ? config.openRouterApiKey : config.apiKey;
+      this.model = config.model || (this.provider === "openrouter" ? "~typesafe/jev-latest" : "jev-latest");
+      if (this.provider === "openrouter" && this.model === "jev-latest") this.model = "~typesafe/jev-latest";
       this.timeoutMs = config.timeoutMs || 20000;
     }
 
     async analyze(state, questions) {
-      if (!this.apiKey) throw new ProviderError("JEV_NO_API_KEY", "Configure a TypeSafe API key in extension settings.", false);
+      if (!this.apiKey) {
+        const providerName = this.provider === "openrouter" ? "OpenRouter" : "TypeSafe";
+        throw new ProviderError(`${this.errorPrefix}_NO_API_KEY`, `Configure a ${providerName} API key in extension settings.`, false);
+      }
       const { data } = await requestWithRetry(
-        "https://api.typesafe.ai/v1/systemone",
+        this.provider === "openrouter"
+          ? "https://openrouter.ai/api/alpha/decisions"
+          : "https://api.typesafe.ai/v1/systemone",
         {
           method: "POST",
           headers: {
@@ -98,7 +107,7 @@
           body: JSON.stringify({ state, model: this.model, questions })
         },
         this.timeoutMs,
-        "JEV"
+        this.errorPrefix
       );
       return data;
     }

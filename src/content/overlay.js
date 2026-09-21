@@ -7,6 +7,7 @@
 
   const STYLE = `
     :host { all: initial; --jev-font:-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", Roboto, Helvetica, Arial, sans-serif; position:absolute; inset:0; display:block; z-index:2147483000; pointer-events:none; font-family:var(--jev-font); color:#1f2937; -webkit-font-smoothing:antialiased; }
+    :host([hidden]) { display:none !important; }
     * { box-sizing:border-box; }
     .mask { display:none; position:absolute; inset:0; z-index:1; pointer-events:none; border-left:4px solid rgba(var(--tint-rgb,56,189,248),.5); border-radius:inherit; background:rgba(var(--tint-rgb,56,189,248),var(--tint-alpha,.1)); transition:background-color .18s ease,border-color .18s ease; }
     .mask[data-level="none"] { --tint-rgb:45,212,191; }
@@ -14,8 +15,8 @@
     .mask[data-level="medium"] { --tint-rgb:251,191,36; }
     .mask[data-level="strong"] { --tint-rgb:248,113,113; }
     .mask.visible { display:block; }
-    .rail { position:absolute; right:calc(100% + 12px); top:0; bottom:0; z-index:3; width:var(--jev-rail-w, 136px); margin:0; padding:10px 6px; display:flex; flex-direction:column; align-items:center; gap:8px; border:1px solid rgba(148,163,184,.55); border-left:4px solid rgb(var(--tint-rgb,148,163,184)); border-radius:10px 0 0 10px; background:rgba(255,255,255,.96); box-shadow:-2px 0 12px rgba(15,23,42,.16); pointer-events:auto; cursor:pointer; font:inherit; color:#334155; overflow:hidden; }
-    .rail.inset { left:0; right:auto; border-radius:0 10px 10px 0; box-shadow:2px 0 12px rgba(15,23,42,.16); }
+    .rail { position:absolute; right:calc(100% + 12px); top:0; bottom:0; z-index:3; width:var(--jev-rail-w, 136px); height:auto; margin:0; padding:10px 6px; display:flex; flex-direction:column; align-items:center; gap:8px; border:1px solid rgba(148,163,184,.55); border-left:4px solid rgb(var(--tint-rgb,148,163,184)); border-radius:10px; background:rgba(255,255,255,.96); box-shadow:-2px 0 12px rgba(15,23,42,.16); pointer-events:auto; cursor:pointer; font:inherit; color:#334155; overflow:hidden; }
+    .rail.inset { left:auto; right:8px; border-radius:10px; box-shadow:2px 0 12px rgba(15,23,42,.16); }
     .rail[data-level="none"] { --tint-rgb:45,212,191; --tint-deep:#0f766e; }
     .rail[data-level="light"] { --tint-rgb:56,189,248; --tint-deep:#0369a1; }
     .rail[data-level="medium"] { --tint-rgb:251,191,36; --tint-deep:#b45309; }
@@ -47,8 +48,11 @@
     .mini-bar-track { height:5px; border-radius:999px; background:rgba(148,163,184,.22); overflow:hidden; }
     .mini-bar-fill { display:block; height:100%; border-radius:inherit; }
     .rail-chart.bars.tight .mini-bar-top { display:none; }
-    .card { display:none; position:absolute; left:0; top:0; bottom:0; z-index:2; width:min(320px, calc(100% - 8px)); overflow:auto; padding:14px; border:1px solid rgba(148,163,184,.35); border-radius:0 14px 14px 0; background:rgba(255,255,255,.98); box-shadow:8px 0 28px rgba(15,23,42,.12); pointer-events:auto; font-size:12.5px; line-height:1.5; color:#334155; }
-    .card.inset { left:calc(var(--jev-rail-w, 136px) + 8px); width:min(320px, calc(100% - var(--jev-rail-w, 136px) - 16px)); }
+    .card { display:none; position:absolute; left:0; top:8px; bottom:auto; z-index:2; width:min(320px, calc(100% - 8px)); max-height:min(calc(100vh - 16px), 600px); overflow-x:hidden; overflow-y:auto; overscroll-behavior:contain; scrollbar-width:thin; scrollbar-color:rgba(100,116,139,.58) transparent; padding:14px; border:1px solid rgba(148,163,184,.35); border-radius:14px; background:rgba(255,255,255,.98); box-shadow:8px 0 28px rgba(15,23,42,.12); pointer-events:auto; font-size:12.5px; line-height:1.5; color:#334155; }
+    .card::-webkit-scrollbar { width:8px; }
+    .card::-webkit-scrollbar-thumb { border:2px solid transparent; border-radius:999px; background:rgba(100,116,139,.5); background-clip:padding-box; }
+    .card::-webkit-scrollbar-track { background:transparent; }
+    .card.inset { left:auto; right:calc(var(--jev-rail-w, 136px) + 16px); width:min(320px, calc(100% - var(--jev-rail-w, 136px) - 24px)); }
     .card.expanded { display:block; }
     .card[data-level="none"] { --tint-rgb:45,212,191; --tint-deep:#0f766e; }
     .card[data-level="light"] { --tint-rgb:56,189,248; --tint-deep:#0369a1; }
@@ -87,10 +91,12 @@
     .source { color:#047857; font-weight:600; }
   `;
 
-  // Default rail width; the carved gutter is rail width plus a 12px gap.
-  // Adjustable via the "左侧评分栏宽度" option (renderer.setRailWidth).
+  // Default width for the floating score panel. Adjustable via the
+  // "左侧评分栏宽度" option (renderer.setRailWidth).
   const DEFAULT_RAIL_WIDTH_PX = 136;
-  const RAIL_GAP_PX = 12;
+  const X_PORTAL_Z_INDEX = "2147483646";
+  const X_OVERLAY_Z_INDEX = "1";
+  const X_EXPANDED_Z_INDEX = "2";
 
   // Light, tech-flavored palette: ring arcs, card dots and level accents all
   // use the 400-weight hues; LEVEL_TEXT is a deeper companion for text.
@@ -100,6 +106,7 @@
 
   const DOCK_STYLE = `
     :host { all:initial; --jev-font:-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", Roboto, Helvetica, Arial, sans-serif; position:fixed; top:72px; right:16px; bottom:16px; width:min(440px,calc(100vw - 32px)); z-index:2147483646; display:block; pointer-events:none; font-family:var(--jev-font); color:#172033; -webkit-font-smoothing:antialiased; }
+    :host([hidden]) { display:none !important; }
     * { box-sizing:border-box; }
     .panel { height:100%; display:flex; flex-direction:column; overflow:hidden; border:1px solid #cbd5e1; border-radius:16px; background:rgba(255,255,255,.98); box-shadow:0 16px 48px rgba(15,23,42,.28); pointer-events:auto; }
     header { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; padding:15px 16px 12px; border-bottom:1px solid #e2e8f0; background:linear-gradient(135deg,#f0fdfa,#f8fafc); }
@@ -123,44 +130,22 @@
     @media (max-width:700px) { :host { top:56px; right:8px; bottom:8px; width:calc(100vw - 16px); } }
   `;
 
-  // The feed column is the outermost ancestor still (nearly) as wide as the
-  // article; anything wider is page layout (nav / sidebar row). Padding it on
-  // the left carves one continuous lane between the menu and the feed.
-  function laneHostFor(article) {
-    let host = null;
-    let node = article.parentElement;
-    let width = article.getBoundingClientRect().width;
-    while (node && node !== article.ownerDocument.body && node !== article.ownerDocument.documentElement) {
-      const nextWidth = node.getBoundingClientRect().width;
-      if (!Number.isFinite(nextWidth) || nextWidth - width > 8) break;
-      host = node;
-      width = nextWidth;
-      node = node.parentElement;
-    }
-    return host;
-  }
-
-  // A rail hanging outside the article is only visible if no element from the
-  // article up to the lane host clips it horizontally. For "shift" lanes the
-  // rail also hangs outside the host's own box, so the host is checked too.
-  // If host is not an ancestor at all, report it as unusable.
-  function clippedBetween(article, host, includeHost = false) {
-    const view = article.ownerDocument?.defaultView;
-    let node = article;
-    while (node) {
-      if (node === host && !includeHost) return false;
-      const overflowX = view?.getComputedStyle(node).overflowX;
-      if (overflowX && overflowX !== "visible") return true;
-      if (node === host) return false;
-      node = node.parentElement;
+  // A floating panel may sit outside the post only when no ancestor clips its
+  // horizontal overflow. Otherwise it is placed over the post without changing
+  // the post's padding or width.
+  function canFloatOutside(parent) {
+    const view = parent?.ownerDocument?.defaultView;
+    if (!view || !parent) return false;
+    const document = parent.ownerDocument;
+    for (let node = parent; node && node !== document.body && node !== document.documentElement; node = node.parentElement) {
+      const overflowX = view.getComputedStyle(node).overflowX;
+      if (overflowX && overflowX !== "visible") return false;
     }
     return true;
   }
 
-  // X's article clips horizontal overflow itself. When its immediate wrapper
-  // has the same box and allows overflow, put the overlay beside the article
-  // in that wrapper so the rail can occupy the lane without adding article
-  // padding (which would narrow the original post).
+  // Some platforms clip an article's horizontal overflow. When its immediate
+  // wrapper has the same box and allows overflow, mount the overlay there.
   function overlayParentFor(article) {
     const view = article.ownerDocument?.defaultView;
     const parent = article.parentElement;
@@ -335,14 +320,145 @@
       this.callbacks = callbacks;
       this.states = new WeakMap();
       this.docks = new WeakMap();
-      // element -> original inline layout/position styles for feed columns
-      this.lanes = new Map();
-      // document -> resolved feed column element (one lane per page)
-      this.laneHosts = new WeakMap();
       this.railWidth = DEFAULT_RAIL_WIDTH_PX;
       this.chartStyle = "rings";
       this.enabled = true;
       this.globalMaskEnabled = true;
+      this.xPortals = new WeakMap();
+      // WeakMap cannot be iterated; keep a set so setEnabled can hide docks too.
+      this.dockList = new Set();
+    }
+
+    ensureXPortal(document) {
+      let portal = this.xPortals.get(document);
+      if (portal) return portal;
+
+      const view = document.defaultView;
+      const layer = document.createElement("div");
+      layer.dataset.jevOverlayRoot = "x";
+      layer.style.cssText = `all:initial;position:fixed;inset:0;display:block;overflow:visible;pointer-events:none;z-index:${X_PORTAL_Z_INDEX};isolation:isolate;`;
+      (document.documentElement || document.body).append(layer);
+
+      portal = { document, view, layer, nearbyStates: new Set(), stateByArticle: new WeakMap(), observer: null, frame: 0 };
+      const schedule = () => {
+        if (portal.frame || !this.enabled || !portal.nearbyStates.size) return;
+        const requestFrame = view.requestAnimationFrame || ((callback) => view.setTimeout(callback, 0));
+        portal.frame = requestFrame.call(view, () => {
+          portal.frame = 0;
+          for (const state of portal.nearbyStates) {
+            if (!state.article.isConnected) {
+              this.removeXPortalState(state);
+              continue;
+            }
+            this.syncXPortalPosition(state);
+          }
+        });
+      };
+      portal.schedule = schedule;
+      document.addEventListener("scroll", schedule, true);
+      view.addEventListener("resize", schedule, { passive: true });
+
+      const IntersectionObserverImpl = view.IntersectionObserver;
+      if (typeof IntersectionObserverImpl === "function") {
+        portal.observer = new IntersectionObserverImpl((entries) => {
+          for (const entry of entries) {
+            const state = portal.stateByArticle.get(entry.target);
+            if (!state) continue;
+            if (!state.article.isConnected) {
+              this.removeXPortalState(state);
+              continue;
+            }
+            if (entry.isIntersecting) {
+              portal.nearbyStates.add(state);
+              this.syncXPortalPosition(state);
+            } else {
+              portal.nearbyStates.delete(state);
+              state.host.style.visibility = "hidden";
+            }
+          }
+        }, { rootMargin: "1000px 0px" });
+      }
+
+      this.xPortals.set(document, portal);
+      return portal;
+    }
+
+    observeXPortalState(state) {
+      const portal = state?.portal;
+      if (!portal || state.portalObserved || !this.enabled) return;
+      state.portalObserved = true;
+      portal.stateByArticle.set(state.article, state);
+      if (portal.observer) portal.observer.observe(state.article);
+      else portal.nearbyStates.add(state);
+      this.syncXPortalPosition(state);
+    }
+
+    syncXPortalPosition(state) {
+      const article = state?.article;
+      const host = state?.host;
+      if (!article?.isConnected || !host?.isConnected || !this.enabled) {
+        if (host) host.style.visibility = "hidden";
+        return;
+      }
+      const rect = article.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) {
+        host.style.visibility = "hidden";
+        return;
+      }
+      host.style.left = `${rect.left}px`;
+      host.style.top = `${rect.top}px`;
+      host.style.width = `${rect.width}px`;
+      host.style.height = `${rect.height}px`;
+      host.style.visibility = "visible";
+      this.positionExpandedCard(state, rect);
+    }
+
+    positionExpandedCard(state, hostRect) {
+      const card = state?.card;
+      if (!card) return;
+      if (!state.expanded) {
+        card.style.removeProperty("max-height");
+        card.style.removeProperty("top");
+        return;
+      }
+
+      const view = state.article?.ownerDocument?.defaultView;
+      const viewportHeight = Number(view?.innerHeight);
+      if (!Number.isFinite(viewportHeight) || viewportHeight <= 0) return;
+
+      const margin = 8;
+      const maxHeight = Math.max(0, Math.min(600, viewportHeight - margin * 2));
+      const bounds = hostRect || state.host?.getBoundingClientRect();
+      if (!bounds) return;
+
+      // Let the card use the available viewport height, then move it upward
+      // when its anchor is near the bottom. Long content scrolls inside it.
+      card.style.maxHeight = `${maxHeight}px`;
+      card.style.top = `${margin}px`;
+      const cardHeight = card.getBoundingClientRect().height;
+      const minTop = margin;
+      const maxTop = Math.max(minTop, viewportHeight - margin - cardHeight);
+      const pageTop = Math.max(minTop, Math.min(bounds.top + margin, maxTop));
+      card.style.top = `${pageTop - bounds.top}px`;
+    }
+
+    removeXPortalState(state) {
+      const portal = state?.portal;
+      if (!portal) return;
+      portal.nearbyStates.delete(state);
+      if (state.portalObserved) portal.observer?.unobserve(state.article);
+      portal.stateByArticle.delete(state.article);
+      state.portalObserved = false;
+      state.railObserver?.disconnect();
+      state.host.remove();
+      this.states.delete(state.article);
+    }
+
+    refreshPositions(articles) {
+      for (const article of articles || []) {
+        const state = this.states.get(article);
+        if (state?.isX) this.syncXPortalPosition(state);
+      }
     }
 
     ensureDock(document) {
@@ -352,6 +468,7 @@
       host.dataset.jevOverlay = "1";
       host.dataset.jevDeepDock = "1";
       host.hidden = true;
+      host.style.display = "none";
       const shadow = host.attachShadow({ mode: "open" });
       const style = document.createElement("style");
       style.textContent = DOCK_STYLE;
@@ -371,6 +488,7 @@
       (document.body || document.documentElement).append(host);
       dock = { host, shadow, panel, title, subtitle, body, footer, activeState: null };
       this.docks.set(document, dock);
+      this.dockList.add(dock);
       return dock;
     }
 
@@ -384,6 +502,7 @@
       state.deepOpen = true;
       dock.subtitle.textContent = subtitle || "LLM 综合解释";
       dock.host.hidden = false;
+      dock.host.style.display = "block";
       return dock;
     }
 
@@ -395,6 +514,7 @@
       }
       dock.activeState = null;
       dock.host.hidden = true;
+      dock.host.style.display = "none";
       dock.body.replaceChildren();
       dock.footer.replaceChildren();
     }
@@ -407,19 +527,24 @@
         state.deepPanel?.remove();
         state.deepActions?.remove();
         state.railObserver?.disconnect();
-        this.applyGutter(state, false);
+        this.restoreOverlayPosition(state);
         state.host.remove();
         this.states.delete(article);
         state = undefined;
       }
       if (state) return state;
-      const lane = this.laneHost(article);
-      const overlayParent = lane?.mode === "shift" ? overlayParentFor(article) : article;
       const view = article.ownerDocument.defaultView;
-      if (view?.getComputedStyle(article).position === "static") article.style.position = "relative";
+      const hostname = String(article.ownerDocument.location?.hostname || "").toLowerCase();
+      const isX = ["x.com", "www.x.com", "twitter.com", "www.twitter.com"].includes(hostname);
+      const portal = isX ? this.ensureXPortal(article.ownerDocument) : undefined;
+      const overlayParent = portal?.layer || overlayParentFor(article);
       const host = article.ownerDocument.createElement("div");
       host.dataset.jevOverlay = "1";
-      host.style.cssText = "position:absolute;inset:0;display:block;overflow:visible;pointer-events:none;z-index:2147483000;";
+      host.style.cssText = isX
+        ? `position:absolute;top:0;left:0;right:auto;bottom:auto;width:0;height:0;display:block;overflow:visible;pointer-events:none;z-index:${X_OVERLAY_Z_INDEX};visibility:hidden;`
+        : "position:absolute;inset:0;display:block;overflow:visible;pointer-events:none;z-index:2147483000;";
+      host.hidden = !this.enabled;
+      if (!this.enabled) host.style.display = "none";
       host.style.setProperty("--jev-rail-w", `${this.railWidth}px`);
       const shadow = host.attachShadow({ mode: "open" });
       const style = article.ownerDocument.createElement("style");
@@ -439,29 +564,67 @@
       rail.append(railScore, railChart, railLabel, railHint);
       shadow.append(style, mask, card, rail);
       overlayParent.append(host);
-      state = { article, postId, host, shadow, mask, card, rail, railChart, railScore, railLabel, railHint, result: null, config: null, revealed: false, expanded: false, railMode: "lane", gutterApplied: false, originalPaddingLeft: "", deepOpen: false, compactMin: 0 };
+      state = {
+        article, postId, host, shadow, mask, card, rail, railChart, railScore, railLabel, railHint,
+        overlayParent, isX, portal, portalObserved: false,
+        positionChangedByUs: false, originalPosition: "",
+        result: null, config: null, revealed: false, expanded: false,
+        deepOpen: false, compactMin: 0
+      };
+      if (!isX && !canFloatOutside(overlayParent)) {
+        rail.classList.add("inset");
+        card.classList.add("inset");
+      }
       rail.addEventListener("click", () => {
         state.expanded = !state.expanded;
         this.updateExpansion(state);
       });
       const ResizeObserverImpl = view?.ResizeObserver;
       if (typeof ResizeObserverImpl === "function") {
-        const observer = new ResizeObserverImpl(() => this.updateCompact(state));
+        const observer = new ResizeObserverImpl(() => {
+          if (state.isX) state.portal?.schedule();
+          this.updateCompact(state);
+        });
         observer.observe(rail);
+        if (isX) observer.observe(article);
         state.railObserver = observer;
       }
-      if (lane && !clippedBetween(overlayParent, lane.host, lane.mode === "shift")) {
-        this.applyLane(lane);
-      } else {
-        // An ancestor clips content outside the article, or no feed column was
-        // found: fall back to a gutter carved inside the post itself.
-        state.railMode = "inset";
-        rail.classList.add("inset");
-        card.classList.add("inset");
-        this.applyGutter(state, true);
-      }
       this.states.set(article, state);
+      if (this.enabled) this.ensureOverlayPosition(state);
+      if (isX) portal.schedule();
       return state;
+    }
+
+    ensureOverlayPosition(state) {
+      if (state?.isX) {
+        this.observeXPortalState(state);
+        return;
+      }
+      const element = state?.overlayParent;
+      const view = element?.ownerDocument?.defaultView;
+      if (!element || !view) return;
+      if (!state.positionChangedByUs && view.getComputedStyle(element).position === "static") {
+        state.originalPosition = element.style.position || "";
+        element.style.position = "relative";
+        state.positionChangedByUs = true;
+      }
+    }
+
+    restoreOverlayPosition(state) {
+      if (state?.isX) {
+        state.portal?.nearbyStates.delete(state);
+        if (state.portalObserved) state.portal?.observer?.unobserve(state.article);
+        state.portal?.stateByArticle.delete(state.article);
+        state.portalObserved = false;
+        state.host.style.visibility = "hidden";
+        return;
+      }
+      const element = state?.overlayParent;
+      if (!element?.isConnected) return;
+      if (state.positionChangedByUs && element.style.position === "relative") {
+        element.style.position = state.originalPosition;
+      }
+      state.positionChangedByUs = false;
     }
 
     // Short posts cannot fit the chart: collapse to score + label. Bar charts
@@ -518,6 +681,7 @@
         makeElement(article.ownerDocument, "div", "caption", message)
       );
       this.updateCompact(state);
+      this.positionExpandedCard(state);
     }
 
     renderError(article, post, error, config) {
@@ -541,6 +705,7 @@
       state.card.dataset.level = "error";
       state.card.replaceChildren(title, detail, buttons);
       this.updateCompact(state);
+      this.positionExpandedCard(state);
     }
 
     // Weights, thresholds and other display settings change without new Jev
@@ -567,7 +732,13 @@
       const score = Math.round((composite?.score || 0) * 100);
       const confidence = composite?.confidence;
       const isUncertain = !Number.isFinite(confidence) || confidence < config.scoring.confidenceFloor;
-      state.maskLevel = globalThis.JevXReaderCore.maskLevelForScore(composite?.score || 0, confidence, config.scoring);
+      // The mask visibility toggle controls only the background tint. Keep the
+      // verdict based on the actual score even when the user turns that tint off.
+      state.maskLevel = globalThis.JevXReaderCore.maskLevelForScore(
+        composite?.score || 0,
+        confidence,
+        { ...config.scoring, maskEnabled: true }
+      );
       const levelLabels = { none: "高价值", light: "值得关注", medium: "一般相关", strong: "低相关" };
       state.card.dataset.level = state.maskLevel;
       // Head: caption, the composite out of 100 and the verdict as a soft chip,
@@ -675,6 +846,7 @@
       state.mask.style.setProperty("--tint-alpha", String(Math.max(0.035, Math.min(0.2, 0.2 - (composite?.score || 0) * 0.16))));
       this.updateMask(state);
       this.updateCompact(state);
+      this.positionExpandedCard(state);
       if (state.deepMarkdown) this.showDeepAnalysis(state, state.deepMarkdown, state.deepSources, state.deepResearch);
     }
 
@@ -756,127 +928,56 @@
       for (const article of articles) {
         const state = this.states.get(article);
         if (state) {
-          state.host.hidden = !enabled;
-          this.applyGutter(state, enabled);
+          if (this.enabled) {
+            this.ensureOverlayPosition(state);
+            state.host.hidden = false;
+            state.host.style.display = "block";
+            this.updateCompact(state);
+          } else {
+            state.host.hidden = true;
+            state.host.style.display = "none";
+            this.restoreOverlayPosition(state);
+          }
         }
       }
-      if (enabled) {
-        for (const article of articles) {
-          const state = this.states.get(article);
-          if (state?.railMode !== "lane") continue;
-          const lane = this.laneHost(article);
-          if (lane) this.applyLane(lane);
-        }
-      } else {
-        this.restoreLanes();
+      for (const dock of this.dockList) {
+        const visible = this.enabled && Boolean(dock.activeState);
+        dock.host.hidden = !visible;
+        dock.host.style.display = visible ? "block" : "none";
       }
     }
 
-    // Resolve the feed column once per document; all articles share it so the
-    // lane can never be carved twice or in two different places. A null
-    // answer is not cached so later articles may retry.
-    laneHost(article) {
-      const doc = article.ownerDocument;
-      if (this.laneHosts.has(doc)) return this.laneHosts.get(doc);
-      // The site adapter may name the feed column explicitly (precise) and may
-      // request "shift" mode, which visually moves the whole column without
-      // changing its layout width. Otherwise fall back to the generic
-      // same-width ancestor walk, padded ("pad" mode).
-      const provided = this.callbacks.laneContainer?.(article);
-      const host = provided?.element || provided || laneHostFor(article);
-      const mode = provided?.mode === "shift" ? "shift" : "pad";
-      if (host && host.getBoundingClientRect().width >= 300) {
-        const lane = { host, mode };
-        this.laneHosts.set(doc, lane);
-        return lane;
-      }
-      return null;
-    }
-
-    // Carve the lane beside the feed. "pad" reserves space inside the column;
-    // "shift" offsets the column visually so its grid/flex width stays intact.
-    applyLane(lane) {
-      const host = lane?.host;
-      if (!host || this.lanes.has(host)) return;
-      const view = host.ownerDocument?.defaultView;
-      const record = {
-        mode: lane.mode,
-        paddingLeft: host.style.paddingLeft || "",
-        marginLeft: host.style.marginLeft || "",
-        position: host.style.position || "",
-        left: host.style.left || ""
-      };
-      if (lane.mode === "shift") {
-        const computed = view?.getComputedStyle(host);
-        const position = computed?.position || "";
-        if (!position || position === "static") host.style.position = "relative";
-        const base = Number.parseFloat(computed?.left || "") || 0;
-        host.style.left = `${base + this.railWidth + RAIL_GAP_PX}px`;
-      } else {
-        const base = Number.parseFloat(view?.getComputedStyle(host).paddingLeft || "") || 0;
-        host.style.paddingLeft = `${base + this.railWidth + RAIL_GAP_PX}px`;
-      }
-      this.lanes.set(host, record);
-    }
-
-    restoreLanes() {
-      for (const [element, record] of this.lanes) {
-        if (element.isConnected) {
-          element.style.paddingLeft = record.paddingLeft;
-          element.style.marginLeft = record.marginLeft;
-          element.style.position = record.position;
-          element.style.left = record.left;
-        }
-      }
-      this.lanes.clear();
-    }
-
-    // Live-update the rail/lane width: restore existing padding and re-carve
-    // at the new width so posts reflow consistently.
+    // Live-update the floating panel width without changing page layout.
     setRailWidth(width, articles) {
       const next = Math.round(Math.max(88, Math.min(220, Number(width) || DEFAULT_RAIL_WIDTH_PX)));
       if (next === this.railWidth) return;
       this.railWidth = next;
       for (const article of articles || []) {
-        this.states.get(article)?.host.style.setProperty("--jev-rail-w", `${next}px`);
-      }
-      if (!this.enabled) return;   // hosts hidden; padding stays restored
-      this.restoreLanes();
-      for (const article of articles || []) {
         const state = this.states.get(article);
         if (!state) continue;
-        if (state.railMode === "lane") {
-          const lane = this.laneHost(article);
-          if (lane) this.applyLane(lane);
-        } else {
-          this.applyGutter(state, false);
-          this.applyGutter(state, true);
-        }
-        this.updateCompact(state);
+        state.host.style.setProperty("--jev-rail-w", `${next}px`);
+        if (this.enabled) this.updateCompact(state);
       }
     }
 
-    // Carve a real gutter so the rail sits in empty space instead of covering
-    // post content. The original inline padding is restored when the overlay
-    // is disabled or the article node is recycled for another post.
-    applyGutter(state, enabled) {
-      const article = state.article;
-      if (enabled && !state.gutterApplied) {
-        state.originalPaddingLeft = article.style.paddingLeft || "";
-        const view = article.ownerDocument?.defaultView;
-        const base = Number.parseFloat(view?.getComputedStyle(article).paddingLeft || "") || 0;
-        article.style.paddingLeft = `${base + this.railWidth + RAIL_GAP_PX}px`;
-        state.gutterApplied = true;
-      } else if (!enabled && state.gutterApplied) {
-        article.style.paddingLeft = state.originalPaddingLeft;
-        state.gutterApplied = false;
-      }
-    }
-
-    updateArticleMasks(articles) {
+    updateArticleMasks(articles, config) {
       for (const article of articles) {
         const state = this.states.get(article);
-        if (state) this.updateMask(state);
+        if (!state) continue;
+        if (config) {
+          state.config = config;
+          if (state.result) {
+            const composite = this.compositeFor(state.result, config);
+            state.maskLevel = globalThis.JevXReaderCore.maskLevelForScore(
+              composite?.score || 0,
+              composite?.confidence,
+              { ...config.scoring, maskEnabled: true }
+            );
+            state.rail.dataset.level = state.maskLevel;
+            state.card.dataset.level = state.maskLevel;
+          }
+        }
+        this.updateMask(state);
       }
     }
 
@@ -889,6 +990,10 @@
 
     updateExpansion(state) {
       state.card.classList.toggle("expanded", state.expanded);
+      this.positionExpandedCard(state);
+      if (state.isX && state.host?.isConnected) {
+        state.host.style.zIndex = state.expanded ? X_EXPANDED_Z_INDEX : X_OVERLAY_Z_INDEX;
+      }
       state.rail.setAttribute("aria-expanded", String(state.expanded));
       state.rail.title = state.expanded ? "收起评分详情" : "展开评分详情";
       state.railHint.textContent = state.expanded ? "‹" : "›";

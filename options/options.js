@@ -4,11 +4,23 @@
   const $ = (id) => document.getElementById(id);
   let savedConfig = Core.createDefaultConfig();
   let savedJevKey = "";
+  let savedOpenRouterJevKey = "";
   let savedLlmKey = "";
   let savedTavilyKey = "";
   let clearJevKey = false;
+  let clearOpenRouterJevKey = false;
   let clearLlmKey = false;
   let clearTavilyKey = false;
+  let previousJevProvider = "typesafe";
+
+  const LLM_PRESETS = {
+    ollama: { provider: "ollama", baseUrl: "http://localhost:11434/v1", model: "llama3.2", message: "已填入本机 Ollama 预设；Key 可留空，连接测试会申请 localhost 权限。" },
+    openai: { provider: "openai-compatible", baseUrl: "https://api.openai.com/v1", model: "gpt-4o-mini", message: "已填入 OpenAI 预设；请填写 API Key 后测试连接。" },
+    deepseek: { provider: "openai-compatible", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat", message: "已填入 DeepSeek 预设；请填写 API Key 后测试连接。" },
+    kimi: { provider: "openai-compatible", baseUrl: "https://api.moonshot.cn/v1", model: "kimi-latest", message: "已填入 Kimi（Moonshot）预设；请填写 API Key 后测试连接。" },
+    zhipu: { provider: "openai-compatible", baseUrl: "https://open.bigmodel.cn/api/paas/v4", model: "glm-4-flash", message: "已填入智谱 GLM 预设；请填写 API Key 后测试连接。" },
+    openrouter: { provider: "openai-compatible", baseUrl: "https://openrouter.ai/api/v1", model: "openai/gpt-4o-mini", message: "已填入 OpenRouter 预设；请填写 API Key 后测试连接。" }
+  };
 
   function setStatus(message, kind = "muted") {
     const element = $("save-status");
@@ -33,6 +45,34 @@
     return String(value || "").split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
   }
 
+  function defaultJevModel(provider) {
+    return provider === "openrouter" ? "~typesafe/jev-latest" : "jev-latest";
+  }
+
+  function updateJevProviderUi(updateDefaultModel = false) {
+    const provider = $("jev-provider").value === "openrouter" ? "openrouter" : "typesafe";
+    if (updateDefaultModel) {
+      const model = $("jev-model").value.trim();
+      if (!model || model === defaultJevModel(previousJevProvider)) {
+        $("jev-model").value = defaultJevModel(provider);
+      }
+    }
+    const isOpenRouter = provider === "openrouter";
+    $("typesafe-jev-key-field").hidden = isOpenRouter;
+    $("openrouter-jev-key-field").hidden = !isOpenRouter;
+    $("clear-jev-key").hidden = isOpenRouter;
+    $("clear-openrouter-jev-key").hidden = !isOpenRouter;
+    $("jev-provider-help").textContent = isOpenRouter
+      ? "通过 OpenRouter Decisions API 调用 Jev。"
+      : "通过 TypeSafe 官方 API 调用 Jev。";
+    $("jev-model-label").textContent = isOpenRouter ? "OpenRouter 模型 ID" : "TypeSafe Jev model";
+    $("jev-model-help").textContent = isOpenRouter
+      ? "默认 ~typesafe/jev-latest；可填写其他 Jev 模型 ID。"
+      : "例如 jev-latest。";
+    $("jev-model").placeholder = defaultJevModel(provider);
+    previousJevProvider = provider;
+  }
+
   function collectConfig() {
     const thresholds = {
       noMask: Number($("threshold-no-mask").value) / 100,
@@ -45,14 +85,20 @@
     } catch {
       throw new Core.ConfigValidationError("Questions JSON 格式无效，请修正后保存。");
     }
+    const jevProvider = $("jev-provider").value;
     const jevApiKey = clearJevKey ? "" : ($("jev-api-key").value || savedJevKey);
+    const openRouterJevApiKey = clearOpenRouterJevKey
+      ? ""
+      : ($("openrouter-jev-api-key").value || savedOpenRouterJevKey);
     const llmApiKey = clearLlmKey ? "" : ($("llm-api-key").value || savedLlmKey);
     const tavilyApiKey = clearTavilyKey ? "" : ($("tavily-api-key").value || savedTavilyKey);
     return Core.normalizeConfig({
       enabled: $("enabled").checked,
       jev: {
+        provider: jevProvider,
         apiKey: jevApiKey,
-        model: $("jev-model").value,
+        openRouterApiKey: openRouterJevApiKey,
+        model: $("jev-model").value.trim() || defaultJevModel(jevProvider),
         timeoutMs: Number($("jev-timeout").value),
         concurrency: Number($("jev-concurrency").value)
       },
@@ -100,16 +146,27 @@
   function populate(config) {
     savedConfig = config;
     savedJevKey = config.jev.apiKey || "";
+    savedOpenRouterJevKey = config.jev.openRouterApiKey || "";
     savedLlmKey = config.llm.apiKey || "";
     savedTavilyKey = config.tavily.apiKey || "";
     clearJevKey = false;
+    clearOpenRouterJevKey = false;
     clearLlmKey = false;
     clearTavilyKey = false;
     $("enabled").checked = config.enabled;
+    $("jev-provider").value = config.jev.provider || "typesafe";
+    previousJevProvider = $("jev-provider").value;
     $("jev-api-key").value = "";
     $("jev-api-key").placeholder = savedJevKey ? "已保存；留空保留" : "输入 TypeSafe API Key";
     $("jev-key-state").textContent = savedJevKey ? "Key 已保存在本地" : "尚未设置";
-    $("jev-model").value = config.jev.model;
+    $("openrouter-jev-api-key").value = "";
+    $("openrouter-jev-api-key").placeholder = savedOpenRouterJevKey ? "已保存；留空保留" : "输入 OpenRouter API Key";
+    $("openrouter-jev-key-state").textContent = savedOpenRouterJevKey ? "Key 已保存在本地" : "尚未设置";
+    const jevModel = config.jev.model === "jev-latest" && previousJevProvider === "openrouter"
+      ? defaultJevModel("openrouter")
+      : config.jev.model;
+    $("jev-model").value = jevModel;
+    updateJevProviderUi();
     $("jev-timeout").value = config.jev.timeoutMs;
     $("jev-concurrency").value = config.jev.concurrency;
     $("interests").value = config.preferences.interests.join("\n");
@@ -154,17 +211,22 @@
     if (!response?.ok) throw new Error(response?.error?.message || "保存失败。");
     savedConfig = settings;
     savedJevKey = settings.jev.apiKey;
+    savedOpenRouterJevKey = settings.jev.openRouterApiKey;
     savedLlmKey = settings.llm.apiKey;
     savedTavilyKey = settings.tavily.apiKey;
     clearJevKey = false;
+    clearOpenRouterJevKey = false;
     clearLlmKey = false;
     clearTavilyKey = false;
     $("jev-api-key").value = "";
+    $("openrouter-jev-api-key").value = "";
     $("llm-api-key").value = "";
     $("tavily-api-key").value = "";
     $("jev-api-key").placeholder = savedJevKey ? "已保存；留空保留" : "输入 TypeSafe API Key";
+    $("openrouter-jev-api-key").placeholder = savedOpenRouterJevKey ? "已保存；留空保留" : "输入 OpenRouter API Key";
     $("llm-api-key").placeholder = savedLlmKey ? "已保存；留空保留" : "输入 LLM API Key";
     $("jev-key-state").textContent = savedJevKey ? "Key 已保存在本地" : "尚未设置";
+    $("openrouter-jev-key-state").textContent = savedOpenRouterJevKey ? "Key 已保存在本地" : "尚未设置";
     $("llm-key-state").textContent = savedLlmKey ? "Key 已保存在本地" : "尚未设置";
     $("tavily-api-key").placeholder = savedTavilyKey ? "已保存；留空保留" : "输入 Tavily API Key";
     $("tavily-key-state").textContent = savedTavilyKey ? "Key 已保存在本地" : "尚未设置";
@@ -185,7 +247,12 @@
     let config;
     try {
       config = collectConfig();
-      if (!config.jev.apiKey) throw new Error("请先填写 TypeSafe API Key。");
+      const activeJevKey = config.jev.provider === "openrouter"
+        ? config.jev.openRouterApiKey
+        : config.jev.apiKey;
+      if (!activeJevKey) {
+        throw new Error(config.jev.provider === "openrouter" ? "请先填写 OpenRouter API Key。" : "请先填写 TypeSafe API Key。");
+      }
       $("test-jev").disabled = true;
       setStatus("正在测试 Jev 连接…");
       await save(config);
@@ -252,6 +319,7 @@
 
   function bind() {
     $("save-settings").addEventListener("click", onSave);
+    $("jev-provider").addEventListener("change", () => updateJevProviderUi(true));
     $("test-jev").addEventListener("click", onTestJev);
     $("test-llm").addEventListener("click", onTestLlm);
     $("test-tavily").addEventListener("click", onTestTavily);
@@ -262,6 +330,14 @@
       $("jev-api-key").placeholder = "保存设置后移除 Key";
       $("jev-key-state").textContent = "保存后将清除";
       setStatus("保存设置后会清除 Jev Key。");
+    });
+    $("clear-openrouter-jev-key").addEventListener("click", () => {
+      clearOpenRouterJevKey = true;
+      savedOpenRouterJevKey = "";
+      $("openrouter-jev-api-key").value = "";
+      $("openrouter-jev-api-key").placeholder = "保存设置后移除 Key";
+      $("openrouter-jev-key-state").textContent = "保存后将清除";
+      setStatus("保存设置后会清除 OpenRouter Key。");
     });
     $("clear-llm-key").addEventListener("click", () => {
       clearLlmKey = true;
@@ -279,11 +355,15 @@
       $("tavily-key-state").textContent = "保存后将清除";
       setStatus("保存设置后会清除 Tavily Key。");
     });
-    $("ollama-preset").addEventListener("click", () => {
-      $("llm-provider").value = "ollama";
-      $("llm-base-url").value = "http://localhost:11434/v1";
-      if (!$("llm-model").value) $("llm-model").value = "llama3.2";
-      setStatus("已填入本机 Ollama 预设；连接测试会申请 localhost 权限。");
+    document.querySelectorAll("[data-llm-preset]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const preset = LLM_PRESETS[button.dataset.llmPreset];
+        if (!preset) return;
+        $("llm-provider").value = preset.provider;
+        $("llm-base-url").value = preset.baseUrl;
+        $("llm-model").value = preset.model;
+        setStatus(preset.message);
+      });
     });
   }
 

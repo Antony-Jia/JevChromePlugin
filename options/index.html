@@ -23,23 +23,49 @@
       <div id="usage-status" class="global-status" role="status" aria-live="polite"></div>
 
       <section class="settings-card">
-        <div class="section-heading"><div><h2>API 密钥</h2><p>所有 Key 只存放在扩展本地（chrome.storage.local），不会传给 X 页面脚本；输入框留空表示保留已保存的 Key。</p></div></div>
+        <div class="section-heading"><div><h2>Jev 快速判断</h2><p>Key 只存放在扩展本地（chrome.storage.local），不会传给 X 页面脚本；输入框留空表示保留已保存的 Key。</p></div></div>
         <div class="grid two">
-          <label class="field"><span>TypeSafe API Key（Jev 快速判断）</span><input id="jev-api-key" type="password" autocomplete="new-password" placeholder="留空保留已保存的 Key"><small id="jev-key-state">尚未设置</small></label>
-          <label class="field"><span>LLM API Key（深入解析，Ollama 可留空）</span><input id="llm-api-key" type="password" autocomplete="new-password" placeholder="留空保留已保存的 Key"><small id="llm-key-state">尚未设置</small></label>
-          <label class="field"><span>Tavily API Key（联网研究）</span><input id="tavily-api-key" type="password" autocomplete="new-password" placeholder="留空保留已保存的 Key"><small id="tavily-key-state">尚未设置</small></label>
-        </div>
-        <div class="actions"><button id="clear-jev-key" class="button secondary" type="button">清除 Jev Key</button><button id="clear-llm-key" class="button secondary" type="button">清除 LLM Key</button><button id="clear-tavily-key" class="button secondary" type="button">清除 Tavily Key</button></div>
-      </section>
-
-      <section class="settings-card">
-        <div class="section-heading"><div><h2>Jev 快速判断</h2><p>API Key 在上方「API 密钥」区块填写；这里只配置请求参数。</p></div></div>
-        <div class="grid two">
-          <label class="field"><span>Jev model</span><input id="jev-model" type="text" value="jev-latest" autocomplete="off"></label>
+          <label class="field"><span>Jev 服务商</span><select id="jev-provider"><option value="typesafe">TypeSafe（官方 API）</option><option value="openrouter">OpenRouter</option></select><small id="jev-provider-help">TypeSafe 直连接口。</small></label>
+          <label id="typesafe-jev-key-field" class="field"><span>TypeSafe API Key</span><input id="jev-api-key" type="password" autocomplete="new-password" placeholder="留空保留已保存的 Key"><small id="jev-key-state">尚未设置</small></label>
+          <label id="openrouter-jev-key-field" class="field" hidden><span>OpenRouter API Key</span><input id="openrouter-jev-api-key" type="password" autocomplete="new-password" placeholder="留空保留已保存的 Key"><small id="openrouter-jev-key-state">尚未设置</small></label>
+          <label class="field"><span id="jev-model-label">Jev model</span><input id="jev-model" type="text" value="jev-latest" autocomplete="off"><small id="jev-model-help">例如 jev-latest</small></label>
           <label class="field"><span>请求超时（毫秒）</span><input id="jev-timeout" type="number" min="1000" max="120000" step="1000"></label>
           <label class="field"><span>并发请求数（1–4）</span><input id="jev-concurrency" type="number" min="1" max="4" step="1"></label>
         </div>
-        <div class="actions"><button id="test-jev" class="button secondary" type="button">保存并测试 Jev 连接</button></div>
+        <div class="actions"><button id="clear-jev-key" class="button secondary" type="button">清除 TypeSafe Key</button><button id="clear-openrouter-jev-key" class="button secondary" type="button" hidden>清除 OpenRouter Key</button><button id="test-jev" class="button secondary" type="button">保存并测试 Jev 连接</button></div>
+      </section>
+
+      <section class="settings-card">
+        <div class="section-heading"><div><h2>深入解析 LLM</h2><p>请求在扩展后台发出。自定义服务只在连接测试时申请对应主机权限；Ollama 可留空 Key，输入框留空表示保留已保存的 Key。</p></div></div>
+        <div class="preset-row">
+          <span class="preset-label">快速填写：</span>
+          <button class="button secondary" type="button" data-llm-preset="ollama">Ollama 本机</button>
+          <button class="button secondary" type="button" data-llm-preset="openai">OpenAI</button>
+          <button class="button secondary" type="button" data-llm-preset="deepseek">DeepSeek</button>
+          <button class="button secondary" type="button" data-llm-preset="kimi">Kimi（Moonshot）</button>
+          <button class="button secondary" type="button" data-llm-preset="zhipu">智谱 GLM</button>
+          <button class="button secondary" type="button" data-llm-preset="openrouter">OpenRouter</button>
+        </div>
+        <div class="grid two">
+          <label class="field"><span>Provider</span><select id="llm-provider"><option value="openai-compatible">OpenAI-compatible</option><option value="ollama">Ollama</option></select></label>
+          <label class="field"><span>LLM API Key（Ollama 可留空）</span><input id="llm-api-key" type="password" autocomplete="new-password" placeholder="留空保留已保存的 Key"><small id="llm-key-state">尚未设置</small></label>
+          <label class="field"><span>Base URL</span><input id="llm-base-url" type="url" placeholder="https://provider.example/v1"></label>
+          <label class="field"><span>Model</span><input id="llm-model" type="text" autocomplete="off" placeholder="填写服务提供的模型名"></label>
+          <label class="field"><span>Temperature</span><input id="llm-temperature" type="number" min="0" max="2" step="0.1"></label>
+          <label class="field"><span>最大输出 tokens</span><input id="llm-max-tokens" type="number" min="64" max="8192" step="64"></label>
+        </div>
+        <div class="actions"><button id="clear-llm-key" class="button secondary" type="button">清除 LLM Key</button><button id="test-llm" class="button secondary" type="button">保存并测试 LLM 连接</button></div>
+      </section>
+
+      <section class="settings-card">
+        <div class="section-heading"><div><h2>Tavily 联网研究</h2><p>深入解析时先检索网页证据，再交给 LLM 综合解释并标注来源；帖子文本会发送给 Tavily。Key 留空表示保留已保存的 Key。</p></div></div>
+        <div class="check-row"><label><input id="tavily-enabled" type="checkbox"> 深入解析时启用 Tavily 搜索</label></div>
+        <div class="grid two">
+          <label class="field"><span>Tavily API Key</span><input id="tavily-api-key" type="password" autocomplete="new-password" placeholder="留空保留已保存的 Key"><small id="tavily-key-state">尚未设置</small></label>
+          <label class="field"><span>搜索深度</span><select id="tavily-search-depth"><option value="basic">Basic（推荐，1 credit）</option><option value="fast">Fast（1 credit）</option><option value="ultra-fast">Ultra fast（1 credit）</option><option value="advanced">Advanced（2 credits）</option></select></label>
+          <label class="field"><span>最大来源数</span><input id="tavily-max-results" type="number" min="1" max="10" step="1"></label>
+        </div>
+        <div class="actions"><button id="clear-tavily-key" class="button secondary" type="button">清除 Tavily Key</button><button id="test-tavily" class="button secondary" type="button">保存并测试 Tavily（消耗搜索额度）</button></div>
       </section>
 
       <section class="settings-card">
@@ -84,28 +110,6 @@
           <label class="field"><span>每分钟最多新分析数（所有标签页共享）</span><input id="max-per-minute" type="number" min="1" max="120" step="1"></label>
           <label class="field"><span>每日外部请求上限（Jev/LLM/Tavily 合计）</span><input id="max-requests-per-day" type="number" min="10" max="10000" step="10"></label>
         </div>
-      </section>
-
-      <section class="settings-card">
-        <div class="section-heading"><div><h2>Tavily 联网研究</h2><p>深入解析时先检索网页证据，再交给 LLM 综合解释并标注来源；帖子文本会发送给 Tavily。</p></div></div>
-        <div class="check-row"><label><input id="tavily-enabled" type="checkbox"> 深入解析时启用 Tavily 搜索</label></div>
-        <div class="grid two">
-          <label class="field"><span>搜索深度</span><select id="tavily-search-depth"><option value="basic">Basic（推荐，1 credit）</option><option value="fast">Fast（1 credit）</option><option value="ultra-fast">Ultra fast（1 credit）</option><option value="advanced">Advanced（2 credits）</option></select></label>
-          <label class="field"><span>最大来源数</span><input id="tavily-max-results" type="number" min="1" max="10" step="1"></label>
-        </div>
-        <div class="actions"><button id="test-tavily" class="button secondary" type="button">保存并测试 Tavily（消耗搜索额度）</button></div>
-      </section>
-
-      <section class="settings-card">
-        <div class="section-heading"><div><h2>深入解析 LLM</h2><p>请求在扩展后台发出。自定义服务只在连接测试时申请对应主机权限。</p></div></div>
-        <div class="grid two">
-          <label class="field"><span>Provider</span><select id="llm-provider"><option value="openai-compatible">OpenAI-compatible</option><option value="ollama">Ollama</option></select></label>
-          <label class="field"><span>Base URL</span><input id="llm-base-url" type="url" placeholder="https://provider.example/v1"></label>
-          <label class="field"><span>Model</span><input id="llm-model" type="text" autocomplete="off" placeholder="填写服务提供的模型名"></label>
-          <label class="field"><span>Temperature</span><input id="llm-temperature" type="number" min="0" max="2" step="0.1"></label>
-          <label class="field"><span>最大输出 tokens</span><input id="llm-max-tokens" type="number" min="64" max="8192" step="64"></label>
-        </div>
-        <div class="actions"><button id="ollama-preset" class="button secondary" type="button">填入本机 Ollama 地址</button><button id="test-llm" class="button secondary" type="button">保存并测试 LLM 连接</button></div>
       </section>
 
       <footer class="footer-actions">

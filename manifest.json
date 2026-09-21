@@ -9,6 +9,7 @@
   ],
   "host_permissions": [
     "https://api.typesafe.ai/*",
+    "https://openrouter.ai/*",
     "https://api.tavily.com/*"
   ],
   "optional_host_permissions": [

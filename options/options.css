@@ -8,6 +8,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 
 body {
   margin: 0;
@@ -47,6 +48,8 @@ body {
 .field textarea { resize: vertical; }
 .field .code-field { font: 12px/1.5 ui-monospace, "Cascadia Code", Consolas, monospace; tab-size: 2; }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.preset-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 16px; }
+.preset-row .preset-label { color: var(--muted); font-size: 13px; font-weight: 600; }
 .button {
   border: 1px solid #cbd5e1;
   border-radius: 8px;

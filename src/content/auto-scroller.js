@@ -5,12 +5,16 @@
 })(globalThis, function () {
   "use strict";
 
+  const RETRYABLE_LIMIT_CODES = new Set(["JEV_RATE_LIMIT", "RATE_LIMIT"]);
+  const RATE_LIMIT_RETRY_MS = 30000;
+
   class AutoScroller {
     constructor(options) {
       this.options = options;
       this.enabled = false;
       this.token = 0;
       this.pauseUntil = 0;
+      this.rateLimitUntil = 0;
       this.processed = new Set();
       this.consecutiveErrors = 0;
     }
@@ -43,6 +47,10 @@
       this.options.onState?.({ enabled: true, paused: true, message: `检测到操作，暂停 ${Math.ceil(duration / 1000)} 秒` });
     }
 
+    isRateLimitPaused() {
+      return this.enabled && Date.now() < this.rateLimitUntil;
+    }
+
     noteAnalysisResult(response) {
       if (!this.enabled) return;
       if (response?.ok) {
@@ -50,9 +58,18 @@
         return;
       }
       const code = response?.error?.code || "UNKNOWN";
+      if (RETRYABLE_LIMIT_CODES.has(code)) {
+        this.rateLimitUntil = Math.max(this.rateLimitUntil, Date.now() + RATE_LIMIT_RETRY_MS);
+        this.options.onState?.({
+          enabled: true,
+          paused: true,
+          message: "Jev 用量受限，30 秒后从当前帖子继续"
+        });
+        return;
+      }
       this.consecutiveErrors += 1;
-      if (["JEV_UNAUTHORIZED", "JEV_FORBIDDEN", "JEV_RATE_LIMIT", "RATE_LIMIT", "DAILY_BUDGET"].includes(code)) {
-        this.stop("Jev 权限、限流或额度已用尽，自动浏览已暂停");
+      if (["JEV_UNAUTHORIZED", "JEV_FORBIDDEN", "DAILY_BUDGET"].includes(code)) {
+        this.stop("Jev 权限或今日额度已用尽，自动浏览已暂停");
       } else if (this.consecutiveErrors >= 3) {
         this.stop("连续分析失败，自动浏览已暂停");
       }
@@ -92,6 +109,19 @@
           await this.wait(Math.min(500, remaining), token);
           continue;
         }
+        if (this.rateLimitUntil) {
+          const remaining = this.rateLimitUntil - Date.now();
+          if (remaining > 0) {
+            this.options.onState?.({
+              enabled: true,
+              paused: true,
+              message: `Jev 用量受限，${Math.ceil(remaining / 1000)} 秒后从当前帖子继续`
+            });
+            await this.wait(Math.min(500, remaining), token);
+            continue;
+          }
+          this.rateLimitUntil = 0;
+        }
 
         const items = this.options.getPosts();
         const current = items.length ? this.currentItem(items) : undefined;
@@ -118,11 +148,14 @@
         ]);
         clearTimeout(timeoutId);
         if (!response?.ok && ["JEV_UNAUTHORIZED", "JEV_FORBIDDEN", "JEV_RATE_LIMIT", "RATE_LIMIT", "DAILY_BUDGET"].includes(response?.error?.code)) {
-          this.stop("Jev 权限、限流或额度已用尽，自动浏览已暂停");
+          if (RETRYABLE_LIMIT_CODES.has(response?.error?.code)) continue;
+          this.stop("Jev 权限或今日额度已用尽，自动浏览已暂停");
           break;
         }
+        if (this.isRateLimitPaused()) continue;
         await this.wait(this.config?.browsing?.dwellMs || 5000, token);
         if (!this.enabled || token !== this.token) break;
+        if (this.isRateLimitPaused()) continue;
         if (Date.now() < this.pauseUntil) continue;
 
         const next = this.nextItem(items, current);

@@ -31,21 +31,28 @@ function safeFailure(label, error) {
 
 async function main() {
   const env = readEnvFile(envPath);
-  const jevKey = env.TYPESAFE_API_KEY;
+  const openRouterOnly = process.argv.includes("--jev-openrouter-only");
+  const llmOnly = process.argv.includes("--llm-only");
+  const jevKey = openRouterOnly ? env.JEV_OPENROUTER : env.TYPESAFE_API_KEY;
   const llmBaseUrl = env.OPENAI_COMPAT_BASE_URL;
   const llmKey = env.OPENAI_COMPAT_API_KEY;
   const llmModel = env.OPENAI_COMPAT_CHAT_MODEL;
-  if (!jevKey) throw new Error("TYPESAFE_API_KEY is empty in .env.");
-  if (!llmBaseUrl || !llmModel) throw new Error("OPENAI_COMPAT_BASE_URL or OPENAI_COMPAT_CHAT_MODEL is empty in .env.");
+  if (!llmOnly && !jevKey) {
+    throw new Error(openRouterOnly ? "JEV_OPENROUTER is empty in .env." : "TYPESAFE_API_KEY is empty in .env.");
+  }
+  if (!openRouterOnly && !llmOnly && (!llmBaseUrl || !llmModel)) {
+    throw new Error("OPENAI_COMPAT_BASE_URL or OPENAI_COMPAT_CHAT_MODEL is empty in .env.");
+  }
 
   const { JevClient } = require("../src/providers/jev-client.js");
-  const { LlmRouter } = require("../src/providers/llm-router.js");
   const { JevResponseSchema } = await import("../src/providers/jev-response-schema.mjs");
 
-  if (!process.argv.includes("--llm-only")) {
+  if (!llmOnly) {
     const jevStarted = Date.now();
     try {
-      const client = new JevClient({ apiKey: jevKey, model: "jev-latest", timeoutMs: 30000 });
+      const client = new JevClient(openRouterOnly
+        ? { provider: "openrouter", openRouterApiKey: jevKey, model: "~typesafe/jev-latest", timeoutMs: 30000 }
+        : { apiKey: jevKey, model: "jev-latest", timeoutMs: 30000 });
       const response = await client.analyze(
         { test: "MVP connectivity check: a released software benchmark includes reproducible measurements." },
         { connection_check: { type: "noul", instructions: "Is this text describing a software benchmark?" } }
@@ -54,14 +61,18 @@ async function main() {
       if (!parsed.success) throw new Error("invalid Jev response schema");
       const answer = parsed.data.answers.connection_check;
       if (answer?.type !== "noul" || !Number.isFinite(Number(answer.noul))) throw new Error("invalid Jev answer");
-      console.log(`PASS Jev System One (${Date.now() - jevStarted} ms; response schema valid)`);
+      const label = openRouterOnly ? "OpenRouter Jev" : "Jev System One";
+      console.log(`PASS ${label} (${Date.now() - jevStarted} ms; response schema valid)`);
     } catch (error) {
-      safeFailure("Jev System One", error);
+      safeFailure(openRouterOnly ? "OpenRouter Jev" : "Jev System One", error);
       process.exitCode = 1;
       return;
     }
   }
 
+  if (openRouterOnly) return;
+
+  const { LlmRouter } = require("../src/providers/llm-router.js");
   const llmStarted = Date.now();
   try {
     const router = new LlmRouter({

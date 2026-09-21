@@ -102,7 +102,7 @@
   function createDefaultConfig() {
     return {
       enabled: true,
-      jev: { apiKey: "", model: "jev-latest", timeoutMs: 20000, concurrency: 2 },
+      jev: { provider: "typesafe", apiKey: "", openRouterApiKey: "", model: "jev-latest", timeoutMs: 20000, concurrency: 2 },
       preferences: {
         interests: [],
         notInterested: [],
@@ -247,6 +247,7 @@
     const defaults = createDefaultConfig();
     const source = input;
     const jev = { ...defaults.jev, ...(source.jev || {}) };
+    const jevProvider = jev.provider || "typesafe";
     const preferences = { ...defaults.preferences, ...(source.preferences || {}) };
     const scoring = { ...defaults.scoring, ...(source.scoring || {}) };
     const thresholds = { ...defaults.scoring.thresholds, ...(scoring.thresholds || {}) };
@@ -265,6 +266,9 @@
     if (!["openai-compatible", "ollama"].includes(llm.provider)) {
       throw new ConfigValidationError("LLM provider must be openai-compatible or ollama.");
     }
+    if (!["typesafe", "openrouter"].includes(jevProvider)) {
+      throw new ConfigValidationError("Jev provider must be TypeSafe or OpenRouter.");
+    }
     if (!["rings", "bars"].includes(scoring.railChartStyle)) {
       throw new ConfigValidationError("Rail chart style must be rings or bars.");
     }
@@ -278,7 +282,10 @@
       enabled: source.enabled !== false,
       jev: {
         apiKey: cleanString(jev.apiKey, "", 4096, "TypeSafe API key"),
-        model: cleanString(jev.model, "jev-latest", 100, "Jev model") || "jev-latest",
+        provider: jevProvider,
+        openRouterApiKey: cleanString(jev.openRouterApiKey, "", 4096, "OpenRouter API key"),
+        model: cleanString(jev.model, jevProvider === "openrouter" ? "~typesafe/jev-latest" : "jev-latest", 100, "Jev model")
+          || (jevProvider === "openrouter" ? "~typesafe/jev-latest" : "jev-latest"),
         timeoutMs: boundedNumber(jev.timeoutMs, 20000, 1000, 120000, "Jev timeout"),
         concurrency: Math.round(boundedNumber(jev.concurrency, 2, 1, 4, "Jev concurrency"))
       },
@@ -326,7 +333,7 @@
   function toPublicConfig(config) {
     return {
       enabled: config.enabled,
-      jev: { model: config.jev.model, timeoutMs: config.jev.timeoutMs },
+      jev: { provider: config.jev.provider, model: config.jev.model, timeoutMs: config.jev.timeoutMs },
       preferences: config.preferences,
       questions: config.questions,
       scoring: config.scoring,
@@ -606,12 +613,13 @@
     return makeCacheKey(contentHashPayload(validateExtractedPost(postInput)));
   }
 
-  // Inference configuration identity: model, preferences and the parts of each
-  // question that are submitted to Jev. Weights, includeInComposite and penalty
-  // only affect local scoring, so they stay out of this fingerprint.
+  // Inference configuration identity: provider/model, preferences and the parts
+  // of each question submitted to Jev. Preserve the legacy TypeSafe payload so
+  // existing TypeSafe cache entries remain valid after this migration.
   function analysisConfigPayload(config) {
     return {
       v: 1,
+      ...(config?.jev?.provider === "openrouter" ? { provider: "openrouter" } : {}),
       model: config?.jev?.model,
       preferences: {
         interests: config?.preferences?.interests,
